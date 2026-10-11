@@ -1,6 +1,804 @@
 openapi: 3.0.3
 info:
-  title: RBAC Permission System API
-  version: 0.0.0-draft
-  description: 仓库准备阶段的接口契约占位。paths 为空，尚无实现或正式确定的接口。
-paths: {}
+  title: RBAC 权限管理系统 API（面向功能后端）
+  version: 0.2.0
+  description: |
+    模块化政务 RBAC0 权限系统的后端接口契约，由「面向功能/过程」后端（backend-procedural）实现。
+    交互方式：HttpSession + Cookie（Swagger UI 中先调用 /api/v1/auth/login，浏览器自动携带 JSESSIONID）。
+    演示账号（密码均为 123456）：E001 超级管理员 / E002 部门管理员 / E004 普通员工 / OPS001 临时运维；
+    E003 为已停用账号（登录返回 403 ACCOUNT_DISABLED）。
+    在线调试：启动应用后访问 http://localhost:8080/swagger-ui.html（运行时规范 /v3/api-docs）。
+    错误均为统一包络：{ "error": { "code", "message", "requestId", "details" } }，并配合 HTTP 状态码。
+servers:
+  - url: http://localhost:8080
+    description: 本地开发（H2 内存库 + 演示数据）
+
+tags:
+  - name: auth
+    description: 认证（登录 / 退出）
+  - name: me
+    description: 当前登录身份与有效权限
+  - name: users
+    description: 用户管理（查询 / 创建 / 状态 / 删除 / 角色）
+  - name: roles
+    description: 角色与角色权限
+  - name: catalog
+    description: 权限目录 / 资源目录 / 部门树
+
+security:
+  - sessionCookie: []
+
+paths:
+  /api/v1/auth/login:
+    post:
+      tags: [auth]
+      summary: 登录
+      description: 账号支持员工号或手机号。成功后服务端登记会话（Cookie JSESSIONID），并返回身份与有效权限摘要。
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: 登录成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginVO'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          description: 账号或密码错误（INVALID_CREDENTIALS）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorVO'
+        '403':
+          description: 账号已停用（ACCOUNT_DISABLED）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorVO'
+
+  /api/v1/auth/logout:
+    post:
+      tags: [auth]
+      summary: 退出登录
+      description: 销毁当前会话。
+      security: []
+      responses:
+        '200':
+          description: 已退出
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+
+  /api/v1/me:
+    get:
+      tags: [me]
+      summary: 当前登录身份
+      responses:
+        '200':
+          description: 当前身份
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeVO'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/me/permissions:
+    get:
+      tags: [me]
+      summary: 当前有效权限
+      description: RBAC0 有效权限 = 已分配且启用角色的直接权限去重并集，含范围（all/self）。
+      responses:
+        '200':
+          description: 有效权限快照
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PermissionsVO'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/users:
+    get:
+      tags: [users]
+      summary: 用户分页查询
+      description: 需要权限码 rbac:user:read。
+      parameters:
+        - name: keyword
+          in: query
+          description: 按姓名 / 员工号 / 岗位模糊匹配
+          schema: { type: string }
+        - name: departmentId
+          in: query
+          schema: { type: string }
+        - name: accountType
+          in: query
+          description: employee / temporary-ops
+          schema: { type: string, enum: [employee, temporary-ops] }
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PageSizeParam'
+      responses:
+        '200':
+          description: 分页结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [users]
+      summary: 创建用户
+      description: 需要权限码 rbac:user:create。不允许分配 super-admin 角色。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '201':
+          description: 创建成功，返回用户详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserDetailVO'
+        '400':
+          description: |-
+            参数错误：INVALID_ARGUMENT（账号类型非法）/ UNKNOWN_DEPARTMENT（部门不存在）/
+            DUPLICATE_ITEM（员工号或手机号重复、roleIds 重复）/ UNKNOWN_ROLE（角色不存在）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorVO'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: 无权限（FORBIDDEN）或试图分配超级管理员角色（PROTECTED_ROLE）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorVO'
+
+  /api/v1/users/{id}:
+    get:
+      tags: [users]
+      summary: 用户详情
+      description: 需要权限码 rbac:user:read。返回角色名与有效权限摘要。
+      parameters:
+        - $ref: '#/components/parameters/UserIdParam'
+      responses:
+        '200':
+          description: 用户详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserDetailVO'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: 用户不存在（USER_NOT_FOUND）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorVO'
+    delete:
+      tags: [users]
+      summary: 删除用户
+      description: 需要权限码 rbac:user:delete。物理删除并清理角色关联；不允许删除本人或超级管理员账号。
+      parameters:
+        - $ref: '#/components/parameters/UserIdParam'
+      responses:
+        '204':
+          description: 删除成功（无响应体）
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: 无权限（FORBIDDEN）或受保护账号（PROTECTED_ACCOUNT）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorVO'
+        '404':
+          description: 用户不存在（USER_NOT_FOUND）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorVO'
+
+  /api/v1/users/{id}/status:
+    put:
+      tags: [users]
+      summary: 修改用户状态（启停）
+      description: 需要权限码 rbac:user:update。不允许修改本人或超级管理员账号的状态。
+      parameters:
+        - $ref: '#/components/parameters/UserIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserStatusRequest'
+      responses:
+        '200':
+          description: 修改后的用户列表项
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserVO'
+        '400':
+          description: 状态值非法（INVALID_ARGUMENT，只允许 active / inactive）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorVO'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: 无权限（FORBIDDEN）或受保护账号（PROTECTED_ACCOUNT）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorVO'
+        '404':
+          description: 用户不存在（USER_NOT_FOUND）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorVO'
+
+  /api/v1/users/{id}/roles:
+    get:
+      tags: [users]
+      summary: 查询用户已分配角色集合
+      description: 需要权限码 rbac:user:read。返回完整角色 ID 集合与集合版本（乐观锁）。
+      parameters:
+        - $ref: '#/components/parameters/UserIdParam'
+      responses:
+        '200':
+          description: 角色集合与版本
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserRolesVO'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: 用户不存在（USER_NOT_FOUND）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorVO'
+    put:
+      tags: [users]
+      summary: 替换用户角色集合
+      description: 需要权限码 rbac:user:assign-role。完整集合语义（空数组表示撤销全部角色），版本不符返回 409。
+      parameters:
+        - $ref: '#/components/parameters/UserIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReplaceRolesRequest'
+      responses:
+        '200':
+          description: 替换后的角色集合与递增版本
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserRolesVO'
+        '400':
+          description: roleIds 重复（DUPLICATE_ITEM）或角色不存在（UNKNOWN_ROLE）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorVO'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: 用户不存在（USER_NOT_FOUND）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorVO'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/v1/roles:
+    get:
+      tags: [roles]
+      summary: 角色分页查询
+      description: 需要权限码 rbac:role:read。含直接权限码与授权集合版本。
+      parameters:
+        - name: keyword
+          in: query
+          description: 按角色名 / 角色码模糊匹配
+          schema: { type: string }
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PageSizeParam'
+      responses:
+        '200':
+          description: 分页结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RolePage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/roles/{id}/permissions:
+    get:
+      tags: [roles]
+      summary: 查询角色直接权限集合
+      description: 需要权限码 rbac:role:read。
+      parameters:
+        - $ref: '#/components/parameters/RoleIdParam'
+      responses:
+        '200':
+          description: 权限码集合与版本
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RolePermissionsVO'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: 角色不存在（ROLE_NOT_FOUND）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorVO'
+    put:
+      tags: [roles]
+      summary: 替换角色直接权限集合
+      description: 需要权限码 rbac:role:grant。完整集合语义（空数组表示撤销全部直接权限），版本不符返回 409。
+      parameters:
+        - $ref: '#/components/parameters/RoleIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReplacePermissionsRequest'
+      responses:
+        '200':
+          description: 替换后的权限集合与递增版本
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RolePermissionsVO'
+        '400':
+          description: permissionCodes 重复（DUPLICATE_ITEM）或权限码不存在（UNKNOWN_PERMISSION）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorVO'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: 角色不存在（ROLE_NOT_FOUND）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorVO'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/v1/permissions:
+    get:
+      tags: [catalog]
+      summary: 权限目录分页查询
+      description: 需要权限码 rbac:permission:read。可授权的最末级权限项。
+      parameters:
+        - name: systemId
+          in: query
+          schema: { type: string }
+        - name: moduleId
+          in: query
+          schema: { type: string }
+        - name: keyword
+          in: query
+          description: 按权限名 / 资源名模糊匹配
+          schema: { type: string }
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PageSizeParam'
+      responses:
+        '200':
+          description: 分页结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PermissionPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/resources:
+    get:
+      tags: [catalog]
+      summary: 资源目录分页查询（逐层展开）
+      description: 需要权限码 rbac:permission:read。parentId 为空时返回根节点（system）。
+      parameters:
+        - name: parentId
+          in: query
+          schema: { type: string }
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PageSizeParam'
+      responses:
+        '200':
+          description: 分页结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourcePage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: 指定的父目录不存在（RESOURCE_NOT_FOUND）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorVO'
+
+  /api/v1/departments:
+    get:
+      tags: [catalog]
+      summary: 部门组织树
+      description: 需要权限码 rbac:department:read。返回嵌套树（含负责人姓名与人数）。
+      responses:
+        '200':
+          description: 部门树根节点列表
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DepartmentNodeVO'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: JSESSIONID
+      description: 登录成功后由服务端下发，浏览器自动携带。
+
+  parameters:
+    UserIdParam:
+      name: id
+      in: path
+      required: true
+      description: 用户 ID（如 demo-u-004）
+      schema: { type: string }
+    RoleIdParam:
+      name: id
+      in: path
+      required: true
+      description: 角色 ID（如 demo-r-reader）
+      schema: { type: string }
+    PageParam:
+      name: page
+      in: query
+      description: 页码，从 1 开始
+      schema: { type: integer, minimum: 1, default: 1 }
+    PageSizeParam:
+      name: pageSize
+      in: query
+      description: 每页条数，1-100，缺省 20
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+
+  responses:
+    Unauthorized:
+      description: 未登录或会话失效（UNAUTHENTICATED）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorVO'
+    Forbidden:
+      description: 无权限（FORBIDDEN），默认拒绝
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorVO'
+    BadRequest:
+      description: 参数校验失败（INVALID_ARGUMENT）
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorVO'
+    Conflict:
+      description: 乐观锁冲突（VERSION_CONFLICT），details 含 expectedVersion / currentVersion
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorVO'
+
+  schemas:
+    ErrorVO:
+      type: object
+      description: 统一错误包络
+      properties:
+        error:
+          type: object
+          properties:
+            code: { type: string, example: FORBIDDEN }
+            message: { type: string, example: 没有执行该操作的权限。 }
+            requestId: { type: string, example: 4f2a9c1b7d3e }
+            details:
+              type: object
+              nullable: true
+              additionalProperties: true
+
+    LoginRequest:
+      type: object
+      required: [account, password]
+      properties:
+        account:
+          type: string
+          description: 员工号或手机号
+          example: E001
+        password:
+          type: string
+          example: '123456'
+
+    LoginVO:
+      type: object
+      properties:
+        user:
+          type: object
+          properties:
+            id: { type: string, example: demo-u-001 }
+            name: { type: string, example: 超级管理员 }
+            employeeNo: { type: string, example: E001 }
+            departmentName: { type: string, nullable: true, example: 总公司 }
+        permissionCodes:
+          type: array
+          items: { type: string }
+
+    MeVO:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        employeeNo: { type: string }
+        departmentId: { type: string, nullable: true }
+        departmentName: { type: string, nullable: true }
+        accountType: { type: string, enum: [employee, temporary-ops] }
+
+    PermissionsVO:
+      type: object
+      properties:
+        userId: { type: string }
+        roleIds:
+          type: array
+          items: { type: string }
+        permissionCodes:
+          type: array
+          items: { type: string }
+        scopes:
+          type: array
+          items:
+            type: object
+            properties:
+              permissionCode: { type: string }
+              scope: { type: string, enum: [all, self] }
+        version: { type: integer, description: 角色集合版本（role_version） }
+
+    UserVO:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        employeeNo: { type: string }
+        departmentId: { type: string, nullable: true }
+        departmentName: { type: string, nullable: true }
+        branch: { type: string, nullable: true }
+        position: { type: string, nullable: true }
+        status: { type: string, enum: [active, inactive] }
+        accountType: { type: string, enum: [employee, temporary-ops] }
+
+    UserDetailVO:
+      allOf:
+        - $ref: '#/components/schemas/UserVO'
+        - type: object
+          properties:
+            phone: { type: string, nullable: true }
+            roles:
+              type: array
+              description: 已分配且启用角色的名称
+              items: { type: string }
+            permissionCodes:
+              type: array
+              description: 有效权限码（去重并集）
+              items: { type: string }
+
+    CreateUserRequest:
+      type: object
+      required: [name, employeeNo, departmentId, accountType, initialPassword]
+      properties:
+        name: { type: string, example: 张三 }
+        employeeNo: { type: string, example: E100 }
+        departmentId: { type: string, example: demo-dept-oa }
+        accountType: { type: string, enum: [employee, temporary-ops] }
+        initialPassword: { type: string, minLength: 6, maxLength: 64, example: abc12345 }
+        phone: { type: string, nullable: true, example: '13900000099' }
+        position: { type: string, nullable: true, example: 文员 }
+        roleIds:
+          type: array
+          nullable: true
+          description: 缺省视为空集合；不允许包含 super-admin 所属角色
+          items: { type: string }
+
+    UpdateUserStatusRequest:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [active, inactive] }
+
+    UserRolesVO:
+      type: object
+      properties:
+        userId: { type: string }
+        roleIds:
+          type: array
+          items: { type: string }
+        version: { type: integer, description: 用户角色集合版本（role_version） }
+
+    ReplaceRolesRequest:
+      type: object
+      required: [roleIds, version]
+      properties:
+        roleIds:
+          type: array
+          description: 完整角色集合，空数组表示撤销全部角色
+          items: { type: string }
+        version:
+          type: integer
+          description: 读取到的当前角色集合版本，不符返回 409
+
+    RoleVO:
+      type: object
+      properties:
+        id: { type: string }
+        code: { type: string, example: document-reader }
+        name: { type: string, example: 公文查看员 }
+        description: { type: string, nullable: true }
+        permissionCodes:
+          type: array
+          items: { type: string }
+        version: { type: integer, description: 授权集合版本（permission_version） }
+
+    RolePermissionsVO:
+      type: object
+      properties:
+        roleId: { type: string }
+        permissionCodes:
+          type: array
+          items: { type: string }
+        version: { type: integer }
+
+    ReplacePermissionsRequest:
+      type: object
+      required: [permissionCodes, version]
+      properties:
+        permissionCodes:
+          type: array
+          description: 完整直接权限集合，空数组表示撤销全部
+          items: { type: string }
+        version:
+          type: integer
+          description: 读取到的当前权限集合版本，不符返回 409
+
+    PermissionItemVO:
+      type: object
+      properties:
+        code: { type: string, example: 'oa:document:read' }
+        name: { type: string, example: 查看公文 }
+        systemId: { type: string, nullable: true }
+        systemName: { type: string, nullable: true }
+        moduleId: { type: string, nullable: true }
+        moduleName: { type: string, nullable: true }
+        resourceCode: { type: string, nullable: true }
+        resourceName: { type: string, nullable: true }
+        action: { type: string, nullable: true }
+        scopeOptions:
+          type: array
+          items: { type: string, enum: [all, self] }
+
+    ResourceItemVO:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        type: { type: string, enum: [system, module, function] }
+        parentId: { type: string, nullable: true }
+        hasChildren: { type: boolean }
+
+    DepartmentNodeVO:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        manager: { type: string, nullable: true, description: 负责人姓名 }
+        branch: { type: string, nullable: true }
+        parentId: { type: string, nullable: true }
+        parentName: { type: string, nullable: true }
+        employeeCount: { type: integer }
+        children:
+          type: array
+          items:
+            $ref: '#/components/schemas/DepartmentNodeVO'
+
+    UserPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/UserVO' }
+        page: { type: integer }
+        pageSize: { type: integer }
+        total: { type: integer, format: int64 }
+
+    RolePage:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/RoleVO' }
+        page: { type: integer }
+        pageSize: { type: integer }
+        total: { type: integer, format: int64 }
+
+    PermissionPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/PermissionItemVO' }
+        page: { type: integer }
+        pageSize: { type: integer }
+        total: { type: integer, format: int64 }
+
+    ResourcePage:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/ResourceItemVO' }
+        page: { type: integer }
+        pageSize: { type: integer }
+        total: { type: integer, format: int64 }
