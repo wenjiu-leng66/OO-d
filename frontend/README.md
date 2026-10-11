@@ -154,7 +154,7 @@ http://localhost:5173
 
 [成员 2 前端数据与 API 契约](../docs/design/member2-frontend-contract.md)
 
-正式 API 以 [OpenAPI](../api/openapi.yaml) 为准。当前 OpenAPI 仍为占位草案。
+正式 API 以 [OpenAPI](../api/openapi.yaml) 为准。成员 6 已整理 RBAC0 第一版草案，仍待前后端确认和真实联调。
 
 ## 成员 3 的第一阶段交付
 

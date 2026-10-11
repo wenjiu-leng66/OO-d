@@ -10,6 +10,6 @@
 | 分工与排期 | [成员](planning/team.md)、[阶段](planning/milestones.md)、[首批任务](planning/first-tasks.md) |
 | 协作约定 | [API](standards/api-contract.md)、[环境](standards/environment.md) |
 | 会议 | [纪要模板](meetings/meeting-template.md) |
-| 质量与演示 | [验收矩阵](testing/acceptance-matrix.md)、[演示准备](demo/README.md) |
+| 质量与演示 | [验收矩阵](testing/acceptance-matrix.md)、[成员 6 RBAC0 API 测试草案](testing/member6-rbac0-api-test-cases.md)、[演示准备](demo/README.md) |
 
 模板和草案不是已经确认的需求。得到老师或小组的结论后，通过 Issue 记录来源并通过 PR 更新资料。
