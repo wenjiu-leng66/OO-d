@@ -8,7 +8,7 @@ import { visibleNavigation } from './policy-adapter'
 const route = useRoute(); const router = useRouter()
 const isLogin = computed(() => route.path === '/login')
 const navItems = [
-  { path: '/dashboard', label: '管理首页', permission: 'rbac:user:read' },
+  { path: '/dashboard', label: '管理首页', sessionOnly: true },
   { path: '/users', label: '用户管理', permission: 'rbac:user:read' },
   { path: '/departments', label: '部门架构', permission: 'rbac:department:read' },
   { path: '/roles', label: '角色权限', permission: 'rbac:role:read' }

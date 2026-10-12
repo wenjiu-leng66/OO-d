@@ -243,7 +243,13 @@ Node.js 版本、公共 UI 规范、公共组件、路由元数据和页面责�
 
 - `/roles` 使用 `RolesView.vue`，当前仍是接入占位页。
 - Vue 路由和侧边栏通过 `src/policy-adapter.js` 调用成员 3 的原有 policy。详情中的“更改角色”弹窗使用草稿，保存成功后更新角色与有效权限；当前登录账号和超级管理员角色不可修改。
-- 共享 Mock 保留成员 3 的原始合成样例 `member3Fixtures`，演示管理员映射到唯一管理员 E001。新增 DEMO001（普通员工）、DEMO002（文档编辑员）、DEMO003（文档审批员），预设密码均为 123456。三个账号可以登录，但没有工作台访问权限，默认进入 `/403`，业务页面尚待接入。
+- 共享 Mock 保留成员 3 的原始合成样例 `member3Fixtures`，演示管理员映射到唯一管理员 E001。新增 DEMO001（普通员工）、DEMO002（文档编辑员）、DEMO003（文档审批员），预设密码均为 123456。三个账号仅用于业务权限演示，不能登录权限管理系统。
 - Mock 提供 `listRoles()`、`listPermissions()`、`listDocuments()`、`updateRolePermissions(id, permissionCodes, version)` 和 `getCurrentUser()`。角色授权成功后会重算 Mock 用户权限；Vue 会话仍须重新获取并更新，尚未实现自动刷新。
 - 部门管理员可分配角色范围尚待团队确认；当前原型提供所有非超级管理员角色。所有授权与密码均为内存中的演示数据。
 - 接入验收见 [成员 2 权限接入说明](../docs/testing/member2-policy-integration.md)。在仓库根目录运行 `node --test tests/frontend/rbac0-policy.test.cjs tests/frontend/policy-router.test.cjs`，在 frontend 下运行 `npm run build`。
+
+## 管理系统登录与工作台范围
+
+当前 Mock 仅允许拥有超级管理员或部门管理员角色的启用账号登录。普通员工及仅有业务权限的临时运维、DEMO 账号会在登录时被拒绝；角色与账号类别独立，员工账号获得部门管理员角色后可登录。真实后端必须执行同样的登录资格检查。
+
+工作台路由及菜单入口只要求登录；统计仍要求 rbac:user:read。统计请求和快捷入口分别检查权限：超管统计全系统用户、临时账号及角色；部门管理员统计本部门用户、临时账号和本部门用户已分配的去重角色数。角色授权变更后的自动会话刷新仍待实现。

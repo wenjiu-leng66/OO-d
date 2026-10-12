@@ -12,7 +12,7 @@ import RolesView from '../views/RolesView.vue'
 const routes = [
   { path: '/login', component: LoginView, meta: { public: true } },
   { path: '/', redirect: '/dashboard' },
-  { path: '/dashboard', component: DashboardView, meta: { title: '管理首页', permission: 'rbac:user:read' } },
+  { path: '/dashboard', component: DashboardView, meta: { title: '管理首页', sessionOnly: true } },
   { path: '/users', component: UsersView, meta: { title: '用户管理', permission: 'rbac:user:read' } },
   { path: '/departments', component: DepartmentsView, meta: { title: '部门架构', permission: 'rbac:department:read' } },
   { path: '/403', component: ForbiddenView, meta: { title: '无权访问', sessionOnly: true } },
