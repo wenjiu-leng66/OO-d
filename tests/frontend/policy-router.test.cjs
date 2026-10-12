@@ -44,3 +44,15 @@ test('侧边栏与页面权限一致，权限加载前隐藏受保护入口', as
   assert.deepEqual(visibleNavigation(auth, items).map(item => item.path), ['/users']);
   assert.deepEqual(visibleNavigation({ ...auth, permissionsLoaded: false }, items), []);
 });
+
+test('工作台只要求登录，缺少用户查看权限也能访问，但不显示用户菜单', async () => {
+  const { routeAccess, visibleNavigation, hasPermission } = await adapter;
+  const dashboard = { path: '/dashboard', meta: { sessionOnly: true } };
+  const noPermissions = { ...auth, permissions: [], permissionsLoaded: false };
+  assert.equal(routeAccess(noPermissions, dashboard).allowed, true);
+  assert.equal(routeAccess({ ...noPermissions, isAuthenticated: false }, dashboard).redirect, '/login');
+  const items = [{ path: '/dashboard', sessionOnly: true }, { path: '/users', permission: 'rbac:user:read' }];
+  assert.deepEqual(visibleNavigation(noPermissions, items).map(item => item.path), ['/dashboard']);
+  assert.deepEqual(visibleNavigation({ ...noPermissions, isAuthenticated: false }, items), []);
+  assert.equal(hasPermission(noPermissions, 'rbac:user:read'), false);
+});

@@ -29,12 +29,12 @@ const departmentOptions = flattenDepartments(departments).filter(item => item.ty
 
 const roleOptions = [
   { id: 'role-employee', name: '普通员工', permissionCodes: ['hr:self:read'] },
-  { id: 'role-department-admin', name: '部门管理员', permissionCodes: ['rbac:user:read', 'rbac:user:create', 'rbac:user:update', 'rbac:department:read'] },
+  { id: 'role-department-admin', name: '部门管理员', permissionCodes: ['rbac:user:read', 'rbac:user:create', 'rbac:user:update', 'rbac:user:assign-role', 'rbac:department:read'] },
   { id: 'role-ops-reader', name: '临时运维查看员', permissionCodes: ['ops:system-status:read', 'ops:log:read'] },
   { id: 'role-finance-reader', name: '财务查看员', permissionCodes: ['finance:report:read'] },
   { id: 'role-document-reader', name: '公文查看员', permissionCodes: ['oa:document:read'] },
   { id: 'role-document-editor', name: '公文编辑员', permissionCodes: ['oa:document:read', 'oa:document:edit'] },
-  { id: 'role-admin', name: '超级管理员', permissionCodes: ['rbac:user:read', 'rbac:user:create', 'rbac:user:update', 'rbac:department:read', 'rbac:role:read', 'rbac:permission:read'] }
+  { id: 'role-admin', name: '超级管理员', permissionCodes: ['rbac:user:read', 'rbac:user:create', 'rbac:user:update', 'rbac:user:assign-role', 'rbac:department:read', 'rbac:role:read', 'rbac:permission:read'] }
 ]
 
 
@@ -341,11 +341,12 @@ export const api = {
     const user = users.find(item => item.employeeNo === account.trim() || item.phone === account.trim())
     if (!user || passwords.get(user.id) !== password) throw new Error('员工号或手机号不存在，或密码错误')
     if (user.status !== 'active') throw new Error('账号已停用，请联系管理员')
+    if (!user.roleIds.some(id => ['role-admin', 'role-department-admin'].includes(id))) throw new Error('当前账号无权限管理系统登录资格，请使用对应业务系统')
     currentUser = user
     return publicUser(user)
   },
   logout() { currentUser = null },
-  async getOverview() { requirePermission('rbac:user:read'); const visible = users.filter(inScope); return demoResponse({ totalUsers: visible.length, temporaryUsers: visible.filter(user => user.accountType === 'temporary-ops').length, totalRoles: roleOptions.length }) },
+  async getOverview() { requirePermission('rbac:user:read'); const visible = users.filter(inScope); return demoResponse({ totalUsers: visible.length, temporaryUsers: visible.filter(user => user.accountType === 'temporary-ops').length, totalRoles: currentUser.roleIds.includes('role-admin') ? roleOptions.length : new Set(visible.flatMap(user => user.roleIds)).size }) },
   async listUsers() { requirePermission('rbac:user:read'); const visible = users.filter(inScope); return demoResponse({ items: visible.map(publicUser), total: visible.length }) },
   async createUser(payload) {
     requirePermission('rbac:user:create')
@@ -377,7 +378,7 @@ export const api = {
     return response
   },
   async updateUserRoles(id, roleIds) {
-    requirePermission('rbac:user:update')
+    requirePermission('rbac:user:assign-role')
     const user = users.find(item => item.id === id)
     if (!user) throw new Error('用户不存在')
     if (user.roleIds.includes('role-admin')) throw new Error('超级管理员角色不可修改')
