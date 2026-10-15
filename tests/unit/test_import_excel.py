@@ -185,6 +185,16 @@ class EmployeesAndManagersTest(unittest.TestCase):
         self.assertEqual([no for no, _ in failed], [3, 4, 5, 6, 7])
         self.assertIn("第2行", failed[0][1])
 
+    def test_duplicate_phone_fails(self):  # 手机号是登录标识之一, 可以为空, 不为空时唯一
+        table = [(1, self.HEAD + ["phone"]),
+                 (2, ["演示己", "DEMO000005", "总公司", "综合办公室", "文员", "12300000001"]),
+                 (3, ["演示庚", "DEMO000006", "总公司", "综合办公室", "文员", "12300000001"]),
+                 (4, ["演示辛", "DEMO000007", "总公司", "综合办公室", "文员", ""]),
+                 (5, ["演示壬", "DEMO000008", "总公司", "综合办公室", "文员", ""])]
+        emps, failed = ie.build_employees(table, self.by_name, "总公司")
+        self.assertEqual([e["phone"] for e in emps], ["12300000001", None, None])
+        self.assertEqual(failed, [(3, "手机号与第2行重复")])
+
     def test_managers_link_by_user_id_and_get_roles(self):
         emps, _ = self.employees(
             ["演示甲", "DEMO_ROOT", "总公司", "公司领导", "董事长"],
@@ -254,50 +264,146 @@ class PasswordHashTest(unittest.TestCase):
             "3afba403fb3d5cfa50fe48be57ca270eede560eac8dd5a2b65666e24c4115125")
 
     def test_random_salt(self):
-        a, b = ie.password_hash("123456"), ie.password_hash("123456")
+        a, b = ie.password_hash("salt-test"), ie.password_hash("salt-test")
         self.assertNotEqual(a, b)
         hex_part = a[len("{pbkdf2@SpringSecurity_v5_8}"):]
         salt, dk = bytes.fromhex(hex_part[:32]), bytes.fromhex(hex_part[32:])
-        self.assertEqual(dk, hashlib.pbkdf2_hmac("sha256", b"123456", salt, 310000, 32))
+        self.assertEqual(dk, hashlib.pbkdf2_hmac("sha256", b"salt-test", salt, 310000, 32))
+
+
+PERM_HEAD = ["软件系统", "功能模块", "功能点", "功能说明", "系统管理员", "公司领导", "部门经理", "项目经理", "普通员工"]
+ROW_SEND = ["协同办公", "公文管理", "发文拟稿", "起草公文", "全部", "查看", "查看/审批", "查看", "新增/编辑本人"]
+ROW_RECV = [None, None, "收文登记", "登记来文", "全部", "查看", "无", "view/新增", None]  # 系统、模块是合并单元格
+ROW_HR = ["人力资源", "员工台账", "员工台账管理", "维护员工档案", "全部", "查看/导出", "查看/编辑", "查看", "查看/编辑本人"]
+SYSTEM_CODES = "code,name\noa,协同办公\nhr,人力资源\n"
+TEST_PASSWORD = "Init-for-tests"
+
+
+def fn(system, module, name, row=2):
+    return {"system": system, "module": module, "name": name, "row": row}
+
+
+class CodesTest(unittest.TestCase):
+    """系统短码表、功能点编号表和权限码 系统码:功能点编号:动作。"""
+
+    def setUp(self):
+        ie.warnings.clear()
+
+    def test_system_codes_are_validated(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "codes.csv"
+            path.write_text("code,name\noa,协同办公\nhr,人力资源\n", encoding="utf-8")
+            self.assertEqual(ie.load_system_codes(path), {"协同办公": (1, "oa"), "人力资源": (2, "hr")})
+            for bad in ("code,name\nHR,人力资源\n", "code,name\nhr,人力资源\nhr,财务\n"):
+                path.write_text(bad, encoding="utf-8")
+                with self.assertRaises(ie.DataError):
+                    ie.load_system_codes(path)
+
+    def test_numbers_survive_reordering_and_new_ones_need_update_flag(self):
+        known = {("协同办公", "公文管理", "发文拟稿"): 1, ("人力资源", "员工台账", "员工台账管理"): 46}
+        fs = [fn("人力资源", "员工台账", "员工台账管理"), fn("协同办公", "公文管理", "发文拟稿")]  # 清单换了顺序
+        self.assertEqual(ie.number_functions(fs, known, allow_new=False), [])
+        self.assertEqual([f["id"] for f in fs], [46, 1])
+        fs.append(fn("协同办公", "公文管理", "收文登记", row=9))
+        with self.assertRaisesRegex(ie.DataError, "第9行.*--update-codes"):
+            ie.number_functions(fs, known, allow_new=False)
+        new = ie.number_functions(fs, known, allow_new=True)
+        self.assertEqual([f["id"] for f in new], [47])  # 接着最大编号往后编
+
+    def test_removed_function_keeps_its_number(self):
+        known = {("协同办公", "公文管理", "发文拟稿"): 1, ("协同办公", "公文管理", "已删除的功能"): 2}
+        fs = [fn("协同办公", "公文管理", "发文拟稿"), fn("协同办公", "公文管理", "收文登记")]
+        ie.number_functions(fs, known, allow_new=True)
+        self.assertEqual(fs[1]["id"], 3)  # 不复用 f002
+        self.assertIn("f002", ie.warnings[-1])
+
+    def test_code_table_round_trip(self):
+        known = {("协同办公", "公文管理", "发文拟稿"): 1}
+        new = [dict(fn("人力资源", "员工台账", "员工台账管理, 含逗号"), id=46)]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "function_codes.csv"
+            ie.save_function_codes(path, known, new)
+            self.assertEqual(path.read_text(encoding="utf-8").splitlines()[:2],
+                             ["code,system,module,function", "f001,协同办公,公文管理,发文拟稿"])
+            self.assertEqual(ie.load_function_codes(path),
+                             {("协同办公", "公文管理", "发文拟稿"): 1, ("人力资源", "员工台账", "员工台账管理, 含逗号"): 46})
+
+    def test_permission_code_and_stable_id(self):
+        perms = ie.build_permissions([(4, "hr", "人力资源")], [(1, 4, "员工台账")], [{"id": 46, "module_id": 1}])
+        self.assertEqual([p[3] for p in perms],
+                         ["hr:f046:read", "hr:f046:create", "hr:f046:edit", "hr:f046:approve", "hr:f046:export",
+                          "hr:f046:delete"])
+        self.assertEqual(perms[2][:3], (45 * 6 + 3, 46, 3))  # 权限 ID 由编号和动作算出
 
 
 class EndToEndTest(unittest.TestCase):
-    """合成 Excel → SQL: 合并单元格向下填充、空行、行号、失败行报告、输出不含 USE 和 salt 列。"""
+    """合成 Excel -> SQL: 合并单元格向下填充、空行、行号、失败行报告、编号稳定、密码不落地。"""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        write_xlsx(self.tmp / "dept.xlsx", [["部门名称", "部门经理", "上级部门"]] + [list(r) for r in DEPTS])
+        (self.tmp / "system_codes.csv").write_text(SYSTEM_CODES, encoding="utf-8")
+        (self.tmp / "users.csv").write_text(
+            "name,username,company,department,position,phone\n"
+            "演示甲,DEMO_ROOT,总公司,公司领导,董事长,\n"
+            "演示己,DEMO000005,道路工程分公司,财务部,会计,12300000000\n"
+            "演示己,DEMO000005,道路工程分公司,财务部,会计,\n", encoding="utf-8")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def run_import(self, perm_rows, update_codes=False, name="seed", password=TEST_PASSWORD):
+        write_xlsx(self.tmp / "perm.xlsx", [PERM_HEAD] + perm_rows)
+        out = self.tmp / "out" / f"{name}.sql"
+        with contextlib.redirect_stdout(io.StringIO()):
+            stats = ie.run(str(self.tmp / "dept.xlsx"), str(self.tmp / "perm.xlsx"), str(self.tmp / "users.csv"),
+                           str(out), password, system_codes_path=str(self.tmp / "system_codes.csv"),
+                           function_codes_path=str(self.tmp / "function_codes.csv"), update_codes=update_codes)
+        return (stats, out.read_text(encoding="utf-8"),
+                (self.tmp / "out" / f"{name}_report.txt").read_text(encoding="utf-8"))
 
     def test_generate_seed(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp = Path(tmp)
-            write_xlsx(tmp / "dept.xlsx", [["部门名称", "部门经理", "上级部门"]] + [list(r) for r in DEPTS])
-            write_xlsx(tmp / "perm.xlsx", [
-                ["软件系统", "功能模块", "功能点", "功能说明", "系统管理员", "公司领导", "部门经理", "项目经理", "普通员工"],
-                ["协同办公", "公文管理", "发文拟稿", "起草公文", "全部", "查看", "查看/审批", "查看", "新增/编辑本人"],
-                [None, None, "收文登记", "登记来文", "全部", "查看", "无", "view/新增", None],
-                [],
-                ["人力资源", "员工台账", "员工台账管理", "维护员工档案", "全部", "查看/导出", "查看/编辑", "查看",
-                 "查看/编辑本人"],
-            ])
-            (tmp / "users.csv").write_text(
-                "name,username,company,department,position,phone\n"
-                "演示甲,DEMO_ROOT,总公司,公司领导,董事长,\n"
-                "演示己,DEMO000005,道路工程分公司,财务部,会计,12300000000\n"
-                "演示己,DEMO000005,道路工程分公司,财务部,会计,\n", encoding="utf-8")
-            out = tmp / "out" / "seed.sql"
-            with contextlib.redirect_stdout(io.StringIO()):
-                stats = ie.run(str(tmp / "dept.xlsx"), str(tmp / "perm.xlsx"), str(tmp / "users.csv"), str(out))
-            sql = out.read_text(encoding="utf-8")
-            report = (tmp / "out" / "seed_report.txt").read_text(encoding="utf-8")
+        stats, sql, report = self.run_import([ROW_SEND, ROW_RECV, [], ROW_HR], update_codes=True)
 
         self.assertEqual((stats["systems"], stats["modules"], stats["functions"]), (2, 2, 3))
         self.assertEqual(stats["permissions"], 18)
         self.assertEqual(stats["grants"], 12 + 9 + 13)
         self.assertEqual(stats["users"], 3)
+        self.assertEqual(stats["new_codes"], 3)
+        self.assertIn("'oa:f001:read'", sql)
+        self.assertIn("'hr:f003:edit'", sql)
+        self.assertIn("(6, 'DEPT_ADMIN', '部门管理员'", sql)  # 平台自己的内置角色
+        self.assertNotIn(TEST_PASSWORD, sql + report)  # 初始密码只以哈希出现
         self.assertNotIn("USE ", sql)
-        self.assertNotIn("salt", sql)
         self.assertIn("INSERT INTO sys_user (id, username, password_hash, real_name, dept_id", sql)
         self.assertIn("'12300000000'", sql)  # 电话按文本保存
         self.assertIn("员工表第4行", report)
         self.assertIn("第3行[收文登记]/普通员工", report)  # 合并单元格下方的空白授权格, 行号保持原表位置
         self.assertIn("第3行[收文登记]/项目经理", report)  # view
+        self.assertEqual((self.tmp / "function_codes.csv").read_text(encoding="utf-8").splitlines()[1:],
+                         ["f001,协同办公,公文管理,发文拟稿", "f002,协同办公,公文管理,收文登记",
+                          "f003,人力资源,员工台账,员工台账管理"])
+
+    def test_reordered_list_keeps_codes(self):
+        self.run_import([ROW_SEND, ROW_RECV, ROW_HR], update_codes=True, name="first")
+        stats, sql, _ = self.run_import([ROW_HR, ROW_SEND, ROW_RECV], name="second")
+        self.assertEqual(stats["new_codes"], 0)
+        self.assertIn(f"({ie.perm_id(3, 3)}, 3, 3, 'hr:f003:edit')", sql)
+
+    def test_unknown_function_without_update_flag_stops(self):
+        self.run_import([ROW_SEND], update_codes=True, name="first")
+        with self.assertRaisesRegex(ie.DataError, "不在编号表中"):
+            self.run_import([ROW_SEND, ROW_RECV], name="second")
+
+    def test_unknown_system_stops(self):
+        (self.tmp / "system_codes.csv").write_text("code,name\noa,协同办公\n", encoding="utf-8")
+        with self.assertRaisesRegex(ie.DataError, "没有短码"):
+            self.run_import([ROW_SEND, ROW_HR], update_codes=True)
+
+    def test_short_initial_password_is_rejected(self):
+        with self.assertRaisesRegex(ie.DataError, "初始密码"):
+            self.run_import([ROW_SEND], update_codes=True, password="123")
 
 
 if __name__ == "__main__":

@@ -4,6 +4,9 @@
 
 - 只用 Python 标准库 (直接解析 xlsx 里的 XML), 不用装 openpyxl。员工表也可以是 UTF-8 的 CSV。
 - 输出含姓名和密码哈希, 默认写到被 Git 忽略的 data/raw/, 不要提交。
+- 权限码 = 系统短码:功能点编号:动作, 如 hr:f046:edit。系统短码来自同目录的 system_codes.csv,
+  功能点编号来自同目录的 function_codes.csv (要提交), 清单行序变化时编号不变。
+- 初始密码在运行时输入或用 --initial-password 指定, 不写进仓库; 所有账号首次登录必须修改密码。
 - 清洗规则、组织映射和待老师确认的事项见 docs/database/import-rules.md。
 
 用法 (在仓库根目录执行):
@@ -14,6 +17,7 @@
 """
 import argparse
 import csv
+import getpass
 import hashlib
 import os
 import re
@@ -24,8 +28,11 @@ import xml.etree.ElementTree as ET
 from decimal import Decimal, InvalidOperation
 
 NS = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
-DEFAULT_PASSWORD = "123456"  # 演示用, 上线前必须修改
 DEFAULT_OUT = os.path.join("data", "raw", "seed_data.sql")
+SEED_DIR = os.path.dirname(os.path.abspath(__file__))
+SYSTEM_CODES_FILE = os.path.join(SEED_DIR, "system_codes.csv")
+FUNCTION_CODES_FILE = os.path.join(SEED_DIR, "function_codes.csv")
+MIN_PASSWORD_LEN = 6
 
 # 与 Spring Security 的 Pbkdf2PasswordEncoder.defaultsForSpringSecurity_v5_8() 一致:
 # 16 字节随机盐, 310000 次 HMAC-SHA256, 32 字节输出, 存 hex(盐 + 哈希), 前缀标明算法。
@@ -35,9 +42,9 @@ PBKDF2_SALT_BYTES = 16
 PBKDF2_ITERATIONS = 310000
 PBKDF2_HASH_BYTES = 32
 
-ACTIONS = [  # (id, code, 中文)
-    (1, "view", "查看"),
-    (2, "add", "新增"),
+ACTIONS = [  # (id, 动作码, 中文)
+    (1, "read", "查看"),
+    (2, "create", "新增"),
     (3, "edit", "编辑"),
     (4, "approve", "审批"),
     (5, "export", "导出"),
@@ -46,13 +53,15 @@ ACTIONS = [  # (id, code, 中文)
 ACTION_BY_CN = {cn: aid for aid, _, cn in ACTIONS}
 ACTION_BY_CN["view"] = 1  # Q-07: 清单 H117、G310 把"查看"写成了英文 view
 
-ROLE_ADMIN, ROLE_LEADER, ROLE_DEPT_MANAGER, ROLE_PROJECT_MANAGER, ROLE_STAFF = 1, 2, 3, 4, 5
-ROLES = [  # (id, code, 名称, 清单中的列名)
-    (ROLE_ADMIN, "ADMIN", "系统管理员", "系统管理员"),
-    (ROLE_LEADER, "LEADER", "公司领导", "公司领导"),
-    (ROLE_DEPT_MANAGER, "DEPT_MANAGER", "部门经理", "部门经理"),
-    (ROLE_PROJECT_MANAGER, "PROJECT_MANAGER", "项目经理", "项目经理"),
-    (ROLE_STAFF, "STAFF", "普通员工", "普通员工"),
+ROLE_ADMIN, ROLE_LEADER, ROLE_DEPT_MANAGER, ROLE_PROJECT_MANAGER, ROLE_STAFF, ROLE_DEPT_ADMIN = 1, 2, 3, 4, 5, 6
+ROLES = [  # (id, code, 名称, 清单中的列名 (None = 平台自己的角色), 说明); 全部是内置角色, 不能删除
+    (ROLE_ADMIN, "ADMIN", "系统管理员", "系统管理员", "超级管理员, 只授予预置账号 admin, 界面上不能授予他人"),
+    (ROLE_LEADER, "LEADER", "公司领导", "公司领导", "来自权限清单'公司领导'列"),
+    (ROLE_DEPT_MANAGER, "DEPT_MANAGER", "部门经理", "部门经理", "来自权限清单'部门经理'列"),
+    (ROLE_PROJECT_MANAGER, "PROJECT_MANAGER", "项目经理", "项目经理", "来自权限清单'项目经理'列"),
+    (ROLE_STAFF, "STAFF", "普通员工", "普通员工", "来自权限清单'普通员工'列"),
+    (ROLE_DEPT_ADMIN, "DEPT_ADMIN", "部门管理员", None,
+     "平台自己的管理角色, 不来自清单; 管理本部门及全部下级部门的用户, 授权在接口设计阶段确定"),
 ]
 
 SEED_TABLES = ("sys_role_permission", "sys_user_role", "sys_permission", "sys_action", "app_function",
@@ -222,7 +231,12 @@ def parse_cell(cell, where):
     return ids, scope
 
 
-def load_permissions(path):
+def load_permissions(path, system_codes):
+    """返回 (systems [(id, 短码, 名称)], modules [(id, system_id, 名称)], functions [dict], grants)。
+
+    functions 按清单顺序, 每项含 seq (清单中的序号)、row、system、module、module_id、name、desc;
+    编号 (id) 由 number_functions 按编号表补上。grants 为 (role_id, seq, action_id, scope)。
+    """
     rows = read_table(path)
     h = find_header(rows, ["功能点"], "权限清单")
     head = rows[h][1]
@@ -231,14 +245,16 @@ def load_permissions(path):
     except ValueError:
         raise DataError(f"权限清单缺少 软件系统/功能模块/功能点/功能说明 列, 表头为 {head}")
     role_cols = {}
-    for rid, _, _, col_name in ROLES:
+    for rid, _, _, col_name, _ in ROLES:
+        if col_name is None:
+            continue
         if col_name not in head:
             raise DataError(f"权限清单缺少角色列: {col_name}")
         role_cols[rid] = head.index(col_name)
 
     systems, modules, functions, grants = [], [], [], []
     cur_sys = cur_mod = None
-    sys_ids, mod_ids, fn_keys = {}, {}, {}
+    sys_seen, mod_ids, fn_keys = set(), {}, {}
     for no, r in rows[h + 1:]:
         r = pad(r, len(head))
         if r[i_sys]:  # 合并单元格只有首行有值 -> 向下填充
@@ -249,24 +265,122 @@ def load_permissions(path):
             continue
         if cur_sys is None or cur_mod is None:
             raise DataError(f"权限清单第{no}行: 功能点 {r[i_fn]} 之前没有出现软件系统或功能模块")
-        if cur_sys not in sys_ids:
-            sys_ids[cur_sys] = len(systems) + 1
-            systems.append((sys_ids[cur_sys], cur_sys))
+        if cur_sys not in system_codes:
+            raise DataError(f"权限清单第{no}行: 软件系统 {cur_sys} 没有短码, 先在 system_codes.csv 登记")
+        sys_id, sys_code = system_codes[cur_sys]
+        if cur_sys not in sys_seen:
+            sys_seen.add(cur_sys)
+            systems.append((sys_id, sys_code, cur_sys))
         mkey = (cur_sys, cur_mod)
         if mkey not in mod_ids:
             mod_ids[mkey] = len(modules) + 1
-            modules.append((mod_ids[mkey], sys_ids[cur_sys], cur_mod))
+            modules.append((mod_ids[mkey], sys_id, cur_mod))
         fkey = (mod_ids[mkey], r[i_fn])
         if fkey in fn_keys:
             raise DataError(f"权限清单第{no}行: 功能点 {r[i_fn]} 与第{fn_keys[fkey]}行在同一模块中重复")
         fn_keys[fkey] = no
-        fid = len(functions) + 1
-        functions.append((fid, mod_ids[mkey], r[i_fn], r[i_desc] or None))
+        seq = len(functions) + 1
+        functions.append({"seq": seq, "row": no, "system": cur_sys, "module": cur_mod,
+                          "module_id": mod_ids[mkey], "name": r[i_fn], "desc": r[i_desc] or None})
         for rid, col in role_cols.items():
             action_ids, scope = parse_cell(r[col], f"第{no}行[{r[i_fn]}]/{head[col]}")
             for aid in sorted(action_ids):
-                grants.append((rid, fid, aid, scope))
+                grants.append((rid, seq, aid, scope))
+    for name, (sys_id, code) in system_codes.items():
+        if name not in sys_seen:
+            warn(f"system_codes.csv 中的系统 {code} {name} 在清单里找不到")
     return systems, modules, functions, grants
+
+
+# ------------------------------------------------------------------ 系统短码与功能点编号
+def fcode(num):
+    """功能点编号 -> 权限码第二段, 46 -> f046"""
+    return f"f{num:03d}"
+
+
+def load_system_codes(path):
+    """system_codes.csv (code,name) -> {系统名称: (app_system.id, 短码)}, id 是文件中的顺序。"""
+    rows = read_table(path)
+    if not rows or rows[0][1][:2] != ["code", "name"]:
+        raise DataError(f"{path}: 表头应为 code,name")
+    result, codes = {}, set()
+    for sys_id, (no, r) in enumerate(rows[1:], 1):
+        code, name = pad(r, 2)[:2]
+        if not re.fullmatch(r"[a-z][a-z0-9]{1,15}", code):
+            raise DataError(f"{path} 第{no}行: 短码 '{code}' 应为 2~16 位小写字母或数字, 以字母开头")
+        if code in codes or name in result:
+            raise DataError(f"{path} 第{no}行: 短码 {code} 或系统名称 {name} 重复")
+        codes.add(code)
+        result[name] = (sys_id, code)
+    return result
+
+
+def load_function_codes(path):
+    """function_codes.csv (code,system,module,function) -> {(系统, 模块, 功能点): 编号}; 文件不存在时为空。"""
+    if not os.path.exists(path):
+        return {}
+    rows = read_table(path)
+    if not rows or rows[0][1][:4] != ["code", "system", "module", "function"]:
+        raise DataError(f"{path}: 表头应为 code,system,module,function")
+    known, rows_by_num = {}, {}
+    for no, r in rows[1:]:
+        r = pad(r, 4)
+        m = re.fullmatch(r"f(\d{3,})", r[0])
+        if not m:
+            raise DataError(f"{path} 第{no}行: 编号 '{r[0]}' 应为 f 加至少 3 位数字")
+        num, key = int(m.group(1)), tuple(r[1:4])
+        if num in rows_by_num:
+            raise DataError(f"{path} 第{no}行: 编号 {r[0]} 与第{rows_by_num[num]}行重复")
+        if key in known:
+            raise DataError(f"{path} 第{no}行: 功能点 {'/'.join(key)} 重复登记")
+        rows_by_num[num] = no
+        known[key] = num
+    return known
+
+
+def number_functions(functions, known, allow_new):
+    """按编号表给功能点补 id。清单里新出现的功能点: allow_new 时接着最大编号往后编, 否则停止导入。
+    返回新登记的功能点。编号表里有、清单里没有的编号保留不复用。"""
+    next_num = max(known.values(), default=0) + 1
+    new = []
+    for f in functions:
+        key = (f["system"], f["module"], f["name"])
+        if key in known:
+            f["id"] = known[key]
+        elif allow_new:
+            f["id"] = next_num
+            next_num += 1
+            new.append(f)
+        else:
+            raise DataError(f"权限清单第{f['row']}行: 功能点 {'/'.join(key)} 不在编号表中。"
+                            f"若是新增的功能点, 加 --update-codes 登记编号并提交编号表; 若是改名, 直接改编号表里的名称")
+    present = {(f["system"], f["module"], f["name"]) for f in functions}
+    for key, num in sorted(known.items(), key=lambda kv: kv[1]):
+        if key not in present:
+            warn(f"编号表中的 {fcode(num)} {'/'.join(key)} 在清单里找不到 (删除或改名), 编号保留不复用")
+    return new
+
+
+def save_function_codes(path, known, new):
+    entries = sorted([(num, key) for key, num in known.items()] +
+                     [(f["id"], (f["system"], f["module"], f["name"])) for f in new])
+    with open(path, "w", encoding="utf-8", newline="") as fh:
+        w = csv.writer(fh, lineterminator="\n")
+        w.writerow(["code", "system", "module", "function"])
+        for num, key in entries:
+            w.writerow([fcode(num), *key])
+
+
+def perm_id(function_id, action_id):
+    """权限 ID 由功能点编号和动作算出, 重复导入、清单调整行序时都不变"""
+    return (function_id - 1) * len(ACTIONS) + action_id
+
+
+def build_permissions(systems, modules, functions):
+    sys_code = {sid: code for sid, code, _ in systems}
+    mod_sys = {mid: sid for mid, sid, _ in modules}
+    return [(perm_id(f["id"], aid), f["id"], aid, f"{sys_code[mod_sys[f['module_id']]]}:{fcode(f['id'])}:{acode}")
+            for f in sorted(functions, key=lambda f: f["id"]) for aid, acode, _ in ACTIONS]
 
 
 # ------------------------------------------------------------------ 员工 & 组织映射
@@ -302,7 +416,7 @@ def build_employees(rows, dept_by_name, root_name):
     if idx["username"] is None:
         warn("员工表没有工号列, 按顺序生成用户名 E0001、E0002…")
 
-    emps, failed, seen = [], [], {}
+    emps, failed, seen, seen_phone = [], [], {}, {}
     for no, r in rows[h + 1:]:
         r = pad(r, len(head))
 
@@ -322,6 +436,10 @@ def build_employees(rows, dept_by_name, root_name):
         if username in seen:
             failed.append((no, f"工号 {username} 与第{seen[username]}行重复"))
             continue
+        phone = get("phone") or None
+        if phone in seen_phone:  # 手机号是登录标识之一, 不为空时必须唯一
+            failed.append((no, f"手机号与第{seen_phone[phone]}行重复"))
+            continue
         key = dept_key(get("company"), get("dept"), root_name)
         dept = dept_by_name.get(key)
         if dept is None:
@@ -333,6 +451,8 @@ def build_employees(rows, dept_by_name, root_name):
             warn(f"员工表第{no}行: 性别 '{gender_text}' 无法识别, 置空")
         if username:
             seen[username] = no
+        if phone:
+            seen_phone[phone] = no
         emps.append({
             "row": no,
             "username": username,
@@ -340,7 +460,7 @@ def build_employees(rows, dept_by_name, root_name):
             "dept_id": dept["id"],
             "position": get("position") or None,
             "gender": gender,
-            "phone": get("phone") or None,
+            "phone": phone,
             "email": get("email") or None,
         })
     return emps, failed
@@ -468,11 +588,12 @@ def insert(out, table, cols, rows, batch=200):
     out.append("")
 
 
-def render_sql(depts, users, systems, modules, functions, perms, grants, perm_id):
+def render_sql(depts, users, systems, modules, functions, perms, grants):
+    by_seq = {f["seq"]: f for f in functions}
     out = [
         "-- 由 database/seeds/import_excel.py 生成, 请勿手改; 改源表后重新生成。",
         "-- 含员工姓名和密码哈希, 不得提交到 Git。执行前先应用迁移 V001__create_core_tables.sql。",
-        f"-- 所有账号的初始密码均为 {DEFAULT_PASSWORD}, 上线前必须修改。",
+        "-- 初始密码在导入时指定, 不写在这里; 所有账号首次登录必须修改密码。",
         "-- 重复执行 = 清空下列 10 张表后按固定 ID 重建, 系统里做过的修改会丢失。",
         "SET NAMES utf8mb4;",
         "SET FOREIGN_KEY_CHECKS = 0;",
@@ -484,7 +605,7 @@ def render_sql(depts, users, systems, modules, functions, perms, grants, perm_id
     insert(out, "sys_dept", ["id", "name", "short_name", "parent_id", "dept_type", "level", "manager_name", "sort_no"],
            [(d["id"], d["name"], d["short_name"], d["parent_id"], d["type"], d["level"], d["manager"] or None, d["id"])
             for d in depts])
-    out.append("-- 用户")
+    out.append("-- 用户 (must_change_password 取默认值 1: 首次登录必须修改密码)")
     insert(out, "sys_user", ["id", "username", "password_hash", "real_name", "dept_id", "position",
                              "gender", "phone", "email"],
            [(u["id"], u["username"], u["password_hash"], u["real_name"], u["dept_id"], u["position"],
@@ -493,75 +614,82 @@ def render_sql(depts, users, systems, modules, functions, perms, grants, perm_id
         if d["manager_user_id"]:
             out.append(f"UPDATE sys_dept SET manager_user_id = {d['manager_user_id']} WHERE id = {d['id']};")
     out.append("")
-    out.append("-- 角色")
-    insert(out, "sys_role", ["id", "code", "name", "description", "sort_no"],
-           [(rid, code, name, f"来自权限清单'{col}'列", rid) for rid, code, name, col in ROLES])
+    out.append("-- 角色 (都是内置角色, 不能删除)")
+    insert(out, "sys_role", ["id", "code", "name", "description", "sort_no", "builtin"],
+           [(rid, code, name, desc, rid, 1) for rid, code, name, _, desc in ROLES])
     out.append("-- 用户-角色")
     insert(out, "sys_user_role", ["user_id", "role_id"],
            [(u["id"], r) for u in users for r in sorted(u["roles"])])
-    out.append("-- 软件系统 / 功能模块 / 功能点")
-    insert(out, "app_system", ["id", "name", "sort_no"], [(i, n, i) for i, n in systems])
+    out.append("-- 软件系统 / 功能模块 / 功能点 (功能点 id 即编号表里的编号)")
+    insert(out, "app_system", ["id", "code", "name", "sort_no"], [(i, c, n, i) for i, c, n in systems])
     insert(out, "app_module", ["id", "system_id", "name", "sort_no"], [(i, s, n, i) for i, s, n in modules])
-    insert(out, "app_function", ["id", "module_id", "name", "description", "sort_no"],
-           [(i, m, n, desc, i) for i, m, n, desc in functions])
-    out.append("-- 操作 & 权限")
+    insert(out, "app_function", ["id", "module_id", "code", "name", "description", "sort_no"],
+           [(f["id"], f["module_id"], fcode(f["id"]), f["name"], f["desc"], f["seq"]) for f in functions])
+    out.append("-- 动作 & 权限")
     insert(out, "sys_action", ["id", "code", "name"], ACTIONS)
     insert(out, "sys_permission", ["id", "function_id", "action_id", "code"], perms)
     out.append("-- 角色-权限 (来自权限清单)")
     insert(out, "sys_role_permission", ["role_id", "permission_id", "data_scope"],
-           [(rid, perm_id[(fid, aid)], scope) for rid, fid, aid, scope in grants])
+           [(rid, perm_id(by_seq[seq]["id"], aid), scope) for rid, seq, aid, scope in grants])
     return "\n".join(out)
 
 
 # ------------------------------------------------------------------ 主流程
-def run(dept_path, perm_path, emp_path, out_path):
-    """执行导入, 写出 SQL 和核对报告 (同目录 *_report.txt), 返回各项数量。"""
+def run(dept_path, perm_path, emp_path, out_path, initial_password,
+        system_codes_path=SYSTEM_CODES_FILE, function_codes_path=FUNCTION_CODES_FILE, update_codes=False):
+    """执行导入, 写出 SQL 和核对报告 (同目录 *_report.txt), 返回各项数量。
+    update_codes 为真时, 把清单里新出现的功能点登记进编号表。"""
     warnings.clear()
+    if len(initial_password or "") < MIN_PASSWORD_LEN:
+        raise DataError(f"初始密码至少 {MIN_PASSWORD_LEN} 位")
     depts, dept_by_name = load_depts(dept_path)
     dept_by_id = {d["id"]: d for d in depts}
     root = next(d for d in depts if d["level"] == 1)
-    systems, modules, functions, grants = load_permissions(perm_path)
+    systems, modules, functions, grants = load_permissions(perm_path, load_system_codes(system_codes_path))
+    known = load_function_codes(function_codes_path)
+    new_codes = number_functions(functions, known, update_codes)
+    if new_codes:
+        save_function_codes(function_codes_path, known, new_codes)
+    perms = build_permissions(systems, modules, functions)
     emps, failed, emp_rows = None, [], 0
     if emp_path:
         emps, failed = load_employees(emp_path, dept_by_name, root["name"])
         emp_rows = len(emps) + len(failed)
     users, unresolved = build_users(depts, emps, dept_by_id)
     for u in users:
-        u["password_hash"] = password_hash(DEFAULT_PASSWORD)
-
-    # 每个功能点 × 6 种操作 = 一条权限
-    perms, perm_id = [], {}
-    for fid, *_ in functions:
-        for aid, code, _ in ACTIONS:
-            pid = len(perms) + 1
-            perm_id[(fid, aid)] = pid
-            perms.append((pid, fid, aid, f"F{fid}:{code}"))
+        u["password_hash"] = password_hash(initial_password)
 
     out_dir = os.path.dirname(out_path)
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
     with open(out_path, "w", encoding="utf-8", newline="\n") as f:
-        f.write(render_sql(depts, users, systems, modules, functions, perms, grants, perm_id).rstrip("\n") + "\n")
+        f.write(render_sql(depts, users, systems, modules, functions, perms, grants).rstrip("\n") + "\n")
 
-    role_count = {code: sum(rid in u["roles"] for u in users) for rid, code, _, _ in ROLES}
+    role_count = {code: sum(rid in u["roles"] for u in users) for rid, code, _, _, _ in ROLES}
     with_mgr = [d for d in depts if d["manager"]]
     stats = {"depts": len(depts), "users": len(users), "systems": len(systems), "modules": len(modules),
-             "functions": len(functions), "permissions": len(perms), "grants": len(grants)}
+             "functions": len(functions), "permissions": len(perms), "grants": len(grants),
+             "new_codes": len(new_codes)}
     lines = [
         "== 导入核对 ==",
         f"部门表: {len(depts)} 个部门 (根节点 {root['name']}), 其中 {len(with_mgr)} 个填了负责人",
         f"权限清单: 系统 {len(systems)} / 模块 {len(modules)} / 功能点 {len(functions)}; "
-        f"权限 {len(perms)} (功能点 x 6 种操作); 角色授权 {len(grants)} 条, "
+        f"权限 {len(perms)} (功能点 x 6 种动作); 角色授权 {len(grants)} 条, "
         f"其中仅本人 (SELF) {sum(g[3] == 'SELF' for g in grants)} 条",
+        f"功能点编号: 编号表原有 {len(known)} 个, 本次新登记 {len(new_codes)} 个"
+        + (f" (已写回 {function_codes_path}, 请提交)" if new_codes else ""),
         (f"员工表: 源数据 {emp_rows} 行 -> 成功 {len(emps)} 行, 失败 {len(failed)} 行" if emp_path
          else "员工表: 未提供, 由部门经理生成用户, 另加 admin 和 staff"),
         f"部门负责人: {len(with_mgr)} 个 -> 已关联用户 ID {len(with_mgr) - len(unresolved)} 个, "
         f"待核对 {len(unresolved)} 个",
-        f"用户 {len(users)} 个; 角色分配: " + ", ".join(f"{k} {v}" for k, v in role_count.items()),
+        f"用户 {len(users)} 个, 首次登录都必须修改密码; 角色分配: "
+        + ", ".join(f"{k} {v}" for k, v in role_count.items()),
         "",
     ]
     lines += [f"[失败] 员工表第{no}行: {reason}" for no, reason in failed]
     lines += [f"[待核对] 部门表第{d['row']}行 {d['name']} 的负责人: {reason}" for d, reason in unresolved]
+    lines += [f"[新编号] {fcode(f['id'])} 权限清单第{f['row']}行 {f['system']}/{f['module']}/{f['name']}"
+              for f in new_codes]
     lines += [f"[警告] {w}" for w in warnings]
     lines.append(f"已写入 {out_path}")
     report = "\n".join(lines) + "\n"
@@ -577,9 +705,18 @@ def main():
     ap.add_argument("--perm", required=True, help="应用软件功能权限清单 .xlsx")
     ap.add_argument("--emp", help="员工信息表 .xlsx 或 UTF-8 .csv (可选)")
     ap.add_argument("-o", "--out", default=DEFAULT_OUT, help=f"输出 SQL, 默认 {DEFAULT_OUT} (被 Git 忽略)")
+    ap.add_argument("--initial-password",
+                    help="所有导入账号的初始密码。不填则运行时提示输入 (推荐, 不会留在命令历史里)")
+    ap.add_argument("--update-codes", action="store_true",
+                    help="把清单里新出现的功能点登记进 function_codes.csv, 之后要提交编号表")
     args = ap.parse_args()
+    password = args.initial_password
+    if password is None:
+        password = getpass.getpass("所有导入账号的初始密码 (首次登录必须修改): ")
+        if getpass.getpass("再输入一次: ") != password:
+            sys.exit("两次输入的密码不一致")
     try:
-        run(args.dept, args.perm, args.emp, args.out)
+        run(args.dept, args.perm, args.emp, args.out, password, update_codes=args.update_codes)
     except DataError as e:
         sys.exit(f"导入失败: {e}")
 

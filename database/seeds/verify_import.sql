@@ -40,17 +40,26 @@ SELECT d.id, d.name, d.level, t.depth
 FROM sys_dept d LEFT JOIN tree t ON t.id = d.id
 WHERE t.id IS NULL OR t.depth <> d.level;
 
--- 6. 每个功能点都有全部操作的权限, 权限码与功能点、操作一致 (返回空 = 正常)
+-- 6. 每个功能点都有全部动作的权限; 权限码 = 系统码:功能点编号:动作, 权限 ID 由编号和动作算出 (返回空 = 正常)
 SELECT f.id, f.name, COUNT(p.id) AS n
 FROM app_function f LEFT JOIN sys_permission p ON p.function_id = f.id
 GROUP BY f.id, f.name
 HAVING COUNT(p.id) <> (SELECT COUNT(*) FROM sys_action);
 
 SELECT p.id, p.code
-FROM sys_permission p JOIN sys_action a ON a.id = p.action_id
-WHERE p.code <> CONCAT('F', p.function_id, ':', a.code);
+FROM sys_permission p
+         JOIN sys_action a   ON a.id = p.action_id
+         JOIN app_function f ON f.id = p.function_id
+         JOIN app_module m   ON m.id = f.module_id
+         JOIN app_system s   ON s.id = m.system_id
+WHERE p.code <> CONCAT(s.code, ':', f.code, ':', a.code)
+   OR f.code <> CONCAT('f', IF(f.id < 1000, LPAD(f.id, 3, '0'), f.id))
+   OR p.id <> (f.id - 1) * (SELECT COUNT(*) FROM sys_action) + a.id;
 
--- 7. 从库里还原清单的一行, 与 Excel 对照 (改 WHERE 里的功能点名称抽查其他行)
+-- 7. 导入的账号首次登录都必须修改密码 (导入后应返回空)
+SELECT id, username FROM sys_user WHERE must_change_password <> 1;
+
+-- 8. 从库里还原清单的一行, 与 Excel 对照 (改 WHERE 里的功能点名称抽查其他行)
 SELECT f.name AS function_name, r.name AS role_name,
        GROUP_CONCAT(a.name ORDER BY a.id SEPARATOR '/') AS actions,
        MIN(rp.data_scope) AS data_scope
@@ -63,7 +72,7 @@ WHERE f.name = '员工台账管理'
 GROUP BY f.name, r.id, r.name
 ORDER BY r.id;
 
--- 8. 重复导入核对: 业务数据指纹, 不含密码哈希 (盐每次随机)。同一份源表导入两次, 结果应完全相同
+-- 9. 重复导入核对: 业务数据指纹, 不含密码哈希 (盐每次随机)。同一份源表导入两次, 结果应完全相同
 SELECT (SELECT BIT_XOR(CRC32(CONCAT_WS('|', id, name, short_name, IFNULL(parent_id, ''), dept_type, level,
                                        IFNULL(manager_name, ''), IFNULL(manager_user_id, ''))))
         FROM sys_dept)                                                                           AS dept_fp,

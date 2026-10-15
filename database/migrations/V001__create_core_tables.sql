@@ -5,7 +5,7 @@
 -- 在已选好的空库中执行; 本文件不建库、不切换库、不删表。回滚见 database/rollback/U001__create_core_tables.sql。
 --
 -- RBAC0: 用户 -(多对多)- 角色 -(多对多)- 权限
--- 权限 = 功能点 x 操作 (查看/新增/编辑/审批/导出/删除)
+-- 权限 = 功能点 x 操作 (查看/新增/编辑/审批/导出/删除), 权限码 系统码:功能点编号:动作, 如 hr:f046:edit
 -- 功能点三级结构: 软件系统 > 功能模块 > 功能点 (来自《应用软件功能权限清单》)
 -- =============================================================
 
@@ -37,24 +37,28 @@ CREATE TABLE sys_dept (
 -- -------------------------------------------------------------
 CREATE TABLE sys_user (
     id              INT          NOT NULL AUTO_INCREMENT COMMENT '用户ID',
-    username        VARCHAR(32)  NOT NULL COMMENT '登录名(工号)',
+    username        VARCHAR(32)  NOT NULL COMMENT '工号, 登录标识之一',
     password_hash   VARCHAR(255) NOT NULL COMMENT '带算法前缀的密码哈希, 不存明文',
+    must_change_password TINYINT NOT NULL DEFAULT 1 COMMENT '1 下次登录必须修改密码 (导入和重置后), 0 已修改',
     real_name       VARCHAR(32)  NOT NULL COMMENT '姓名',
     dept_id         INT          NULL     COMMENT '所属部门',
     position        VARCHAR(32)  NULL     COMMENT '岗位/职务',
     gender          CHAR(1)      NULL     COMMENT 'M/F',
-    phone           VARCHAR(20)  NULL     COMMENT '电话(按文本存)',
+    phone           VARCHAR(20)  NULL     COMMENT '手机号(按文本存), 登录标识之一, 可为空, 不为空时唯一',
     email           VARCHAR(64)  NULL,
     status          TINYINT      NOT NULL DEFAULT 1 COMMENT '1启用 0禁用',
+    role_version    INT          NOT NULL DEFAULT 1 COMMENT '角色集合版本号, 整组替换角色时校验并加 1',
     last_login_at   DATETIME     NULL,
     created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
     UNIQUE KEY uk_user_username (username),
+    UNIQUE KEY uk_user_phone (phone),
     KEY idx_user_dept (dept_id),
     KEY idx_user_real_name (real_name),
     CONSTRAINT fk_user_dept FOREIGN KEY (dept_id) REFERENCES sys_dept (id),
     CONSTRAINT ck_user_status CHECK (status IN (0, 1)),
+    CONSTRAINT ck_user_must_change CHECK (must_change_password IN (0, 1)),
     CONSTRAINT ck_user_gender CHECK (gender IN ('M', 'F'))
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '用户(员工)';
 
@@ -72,10 +76,13 @@ CREATE TABLE sys_role (
     description     VARCHAR(255) NULL,
     sort_no         INT          NOT NULL DEFAULT 0,
     status          TINYINT      NOT NULL DEFAULT 1 COMMENT '1启用 0禁用',
+    builtin         TINYINT      NOT NULL DEFAULT 0 COMMENT '1 内置角色(清单 5 个 + 部门管理员), 不能删除',
+    permission_version INT       NOT NULL DEFAULT 1 COMMENT '角色授权版本号, 整组替换授权时校验并加 1',
     created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
     UNIQUE KEY uk_role_code (code),
-    CONSTRAINT ck_role_status CHECK (status IN (0, 1))
+    CONSTRAINT ck_role_status CHECK (status IN (0, 1)),
+    CONSTRAINT ck_role_builtin CHECK (builtin IN (0, 1))
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '角色';
 
 -- -------------------------------------------------------------
@@ -83,9 +90,11 @@ CREATE TABLE sys_role (
 -- -------------------------------------------------------------
 CREATE TABLE app_system (
     id              INT          NOT NULL AUTO_INCREMENT,
+    code            VARCHAR(16)  NOT NULL COMMENT '系统短码, 权限码第一段, 如 hr',
     name            VARCHAR(64)  NOT NULL COMMENT '软件系统名称',
     sort_no         INT          NOT NULL DEFAULT 0,
     PRIMARY KEY (id),
+    UNIQUE KEY uk_system_code (code),
     UNIQUE KEY uk_system_name (name)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '软件系统';
 
@@ -100,12 +109,14 @@ CREATE TABLE app_module (
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '功能模块';
 
 CREATE TABLE app_function (
-    id              INT          NOT NULL AUTO_INCREMENT,
+    id              INT          NOT NULL AUTO_INCREMENT COMMENT '功能点编号, 由编号表固定, 清单行序变化时不变',
     module_id       INT          NOT NULL,
+    code            VARCHAR(8)   NOT NULL COMMENT '功能点编号码, 权限码第二段, 如 f046',
     name            VARCHAR(64)  NOT NULL COMMENT '功能点名称',
     description     VARCHAR(255) NULL     COMMENT '功能说明',
-    sort_no         INT          NOT NULL DEFAULT 0,
+    sort_no         INT          NOT NULL DEFAULT 0 COMMENT '清单中的显示顺序',
     PRIMARY KEY (id),
+    UNIQUE KEY uk_function_code (code),
     UNIQUE KEY uk_function (module_id, name),
     CONSTRAINT fk_function_module FOREIGN KEY (module_id) REFERENCES app_module (id) ON DELETE CASCADE
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '功能点';
@@ -115,7 +126,7 @@ CREATE TABLE app_function (
 -- -------------------------------------------------------------
 CREATE TABLE sys_action (
     id              TINYINT      NOT NULL,
-    code            VARCHAR(16)  NOT NULL COMMENT 'view/add/edit/approve/export/delete',
+    code            VARCHAR(16)  NOT NULL COMMENT 'read/create/edit/approve/export/delete',
     name            VARCHAR(16)  NOT NULL COMMENT '查看/新增/编辑/审批/导出/删除',
     PRIMARY KEY (id),
     UNIQUE KEY uk_action_code (code)
@@ -125,7 +136,7 @@ CREATE TABLE sys_permission (
     id              INT          NOT NULL AUTO_INCREMENT,
     function_id     INT          NOT NULL,
     action_id       TINYINT      NOT NULL,
-    code            VARCHAR(32)  NOT NULL COMMENT '权限码 F{功能点ID}:{操作}, 如 F12:view',
+    code            VARCHAR(64)  NOT NULL COMMENT '权限码 系统码:功能点编号:动作, 如 hr:f046:edit',
     PRIMARY KEY (id),
     UNIQUE KEY uk_perm (function_id, action_id),
     UNIQUE KEY uk_perm_code (code),
