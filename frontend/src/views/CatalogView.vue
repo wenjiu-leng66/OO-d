@@ -13,7 +13,7 @@ const mappingRows = computed(() => Object.entries(adminMapping).flatMap(([id, it
   Object.entries(item.actions).map(([action, codes]) => ({ id, action: actions.find(a => a.code === action).label, sysCode: `sys:${id}:${action}`, codes, page: item.page, stage: item.stage }))))
 async function load() {
   loading.value = true; failed.value = false
-  try { result.value = await api.listCatalog({ systemCode: systemCode.value, module: moduleName.value, keyword: keyword.value, page: page.value, size }) }
+  try { result.value = await api.listCatalog({ systemCode: systemCode.value, module: moduleName.value, keyword: keyword.value, page: page.value, pageSize: size }) }
   catch { failed.value = true } finally { loading.value = false }
 }
 function search() { page.value = 1; load() }

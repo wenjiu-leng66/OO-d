@@ -30,7 +30,7 @@ export const departments = departmentRows.map(([id, name, type, parentId, manage
 
 // 角色：6 个内置角色 + 自建能力角色。kind 区分管理类与业务角色（GRANT-03）。
 export const roleRows = [
-  ['R01', 'SUPER_ADMIN', '超级管理员', 'admin', true, '清单“系统管理员”列。系统只预置一个账号 admin'],
+  ['R01', 'ADMIN', '超级管理员', 'admin', true, '清单“系统管理员”列。系统只预置一个账号 admin'],
   ['R02', 'LEADER', '公司领导', 'business', true, '清单“公司领导”列。管理后台只读，日志可导出'],
   ['R03', 'DEPT_MANAGER', '部门经理', 'business', true, '清单“部门经理”列。查看为全部，管理类操作限本部门'],
   ['R04', 'PROJECT_MANAGER', '项目经理', 'business', true, '清单“项目经理”列。查看为全部，管理类操作限本项目部'],

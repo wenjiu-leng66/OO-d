@@ -127,10 +127,10 @@ function departmentAllowed(scope, actor, departmentId) {
   return covers(scope, actor, { id: null, departmentId })
 }
 
-function paginate(rows, page = 1, size = 10) {
-  const safeSize = Math.min(Math.max(Number(size) || 10, 1), 100)
+function paginate(rows, page = 1, pageSize = 10) {
+  const safeSize = Math.min(Math.max(Number(pageSize) || 10, 1), 100)
   const safePage = Math.max(Number(page) || 1, 1)
-  return { items: rows.slice((safePage - 1) * safeSize, safePage * safeSize), total: rows.length, page: safePage, size: safeSize }
+  return { items: rows.slice((safePage - 1) * safeSize, safePage * safeSize), total: rows.length, page: safePage, pageSize: safeSize }
 }
 
 const PHONE = /^1\d{10}$/
@@ -204,7 +204,7 @@ export const api = {
   },
 
   // 员工台账：真实业务（PORTAL-04 ~ 06、UC-08）
-  async listEmployees({ keyword = '', page = 1, size = 10 } = {}) {
+  async listEmployees({ keyword = '', page = 1, pageSize = 10 } = {}) {
     const { user: actor, scope } = authorize('hr:f046:read')
     const editGrant = computeGrants(actor).find(item => item.code === 'hr:f046:edit')
     const text = keyword.trim()
@@ -216,7 +216,7 @@ export const api = {
         departmentPath: departmentPath(user.departmentId), position: user.position, phone: user.phone, email: user.email,
         editable: Boolean(editGrant && covers(editGrant.scope, actor, user))
       }))
-    return listResponse({ ...paginate(rows, page, size), readScope: scope, editScope: editGrant?.scope || null })
+    return listResponse({ ...paginate(rows, page, pageSize), readScope: scope, editScope: editGrant?.scope || null })
   },
   async updateEmployeeContact(id, payload) {
     const allowed = ['phone', 'email']
@@ -244,7 +244,7 @@ export const api = {
   },
 
   // 用户管理（USER-01 ~ 07、GRANT-01、GRANT-03）
-  async listUsers({ departmentId = '', keyword = '', roleId = '', status = '', page = 1, size = 10 } = {}) {
+  async listUsers({ departmentId = '', keyword = '', roleId = '', status = '', page = 1, pageSize = 10 } = {}) {
     const { user: actor, scope } = authorize('rbac:user:read')
     const text = keyword.trim()
     const rows = db.users
@@ -254,7 +254,7 @@ export const api = {
       .filter(user => !roleId || user.roleIds.includes(roleId))
       .filter(user => !status || user.status === status)
       .map(publicUser)
-    return listResponse({ ...paginate(rows, page, size), scope })
+    return listResponse({ ...paginate(rows, page, pageSize), scope })
   },
   async getUser(id) {
     const { target } = userInScope('rbac:user:read', id)
@@ -319,7 +319,9 @@ export const api = {
     const { actor, target } = userInScope('rbac:user:assign-role', id)
     protectAccount(actor, target, '修改角色')
     if (!Array.isArray(roleIds) || roleIds.some(roleId => !roleById(roleId))) fail(400, 'VALIDATION', '请选择有效角色')
-    const next = [...new Set(roleIds)]
+    // 重复元素不静默去重，按 API 草案返回 400（测试用例 API-013）。
+    if (new Set(roleIds).size !== roleIds.length) fail(400, 'VALIDATION', '角色集合中有重复项')
+    const next = [...roleIds]
     if (next.includes(SUPER_ADMIN)) fail(403, 'FORBIDDEN', '超级管理员角色不能授给其他账号')
     const changed = [...next.filter(roleId => !target.roleIds.includes(roleId)), ...target.roleIds.filter(roleId => !next.includes(roleId))]
     const actorIsSuper = actor.roleIds.includes(SUPER_ADMIN) && roleById(SUPER_ADMIN).enabled
@@ -451,7 +453,7 @@ export const api = {
   },
 
   // 资源目录（CAT-01，只读）
-  async listCatalog({ systemCode = '', module = '', keyword = '', page = 1, size = 15 } = {}) {
+  async listCatalog({ systemCode = '', module = '', keyword = '', page = 1, pageSize = 15 } = {}) {
     authorize('rbac:permission:read')
     const text = keyword.trim().toLowerCase()
     const rows = functions
@@ -459,7 +461,7 @@ export const api = {
       .filter(fn => !module || fn.module === module)
       .filter(fn => !text || `${fn.id}${fn.name}${fn.module}${fn.systemCode}:${fn.id}`.toLowerCase().includes(text))
       .map(fn => ({ ...fn, codes: actions.map(action => `${fn.systemCode}:${fn.id}:${action.code}`), admin: adminMapping[fn.id] || null }))
-    return listResponse({ ...paginate(rows, page, size), stats: { systems: systems.length, modules: modules.length, functions: functions.length, permissions: catalogPermissions.length } })
+    return listResponse({ ...paginate(rows, page, pageSize), stats: { systems: systems.length, modules: modules.length, functions: functions.length, permissions: catalogPermissions.length } })
   },
 
   // 仅原型：模拟“另一位管理员已先保存”，用来演示 409 冲突。

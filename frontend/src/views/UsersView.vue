@@ -20,7 +20,7 @@ const actorIsSuper = computed(() => auth.roles.some(role => role.id === 'R01' &&
 
 async function load() {
   loading.value = true; failed.value = false
-  try { result.value = await api.listUsers({ ...filters, page: page.value, size }) }
+  try { result.value = await api.listUsers({ ...filters, page: page.value, pageSize: size }) }
   catch { failed.value = true } finally { loading.value = false }
 }
 function search() { page.value = 1; load() }

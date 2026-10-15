@@ -46,20 +46,20 @@ test('普通员工菜单没有系统管理后台；考勤管理只有查看、�
 
 test('员工台账：普通员工只看到自己；部门经理看到全部（PORTAL-04）', async () => {
   const staff = await as('SG000013');
-  const own = await api.listEmployees({ size: 100 });
+  const own = await api.listEmployees({ pageSize: 100 });
   assert.deepEqual(own.items.map(item => item.id), [staff.user.id]);
   assert.equal(own.items[0].editable, true);
   await as('SG000011');
-  const all = await api.listEmployees({ size: 100 });
+  const all = await api.listEmployees({ pageSize: 100 });
   const admin = await as('admin');
-  const users = await api.listUsers({ size: 100 });
+  const users = await api.listUsers({ pageSize: 100 });
   assert.equal(all.total, users.total);
   assert.equal(admin.user.username, 'admin');
 });
 
 test('员工台账编辑：本部门可改，范围外和非法字段被拒绝且不返回记录（PORTAL-05、T-09）', async () => {
   await as('SG000011');
-  const list = await api.listEmployees({ size: 100 });
+  const list = await api.listEmployees({ pageSize: 100 });
   const colleague = list.items.find(item => item.departmentName === '综合办公室' && item.username !== 'SG000011');
   const outsider = list.items.find(item => !item.departmentPath.includes('综合办公室'));
   assert.equal(colleague.editable, true);
@@ -78,7 +78,7 @@ test('员工台账编辑：本部门可改，范围外和非法字段被拒绝�
 
 test('项目经理：员工台账查看为全部，编辑只限本项目部（需求规格 5.4）', async () => {
   await as('SG000281');
-  const list = await api.listEmployees({ size: 100 });
+  const list = await api.listEmployees({ pageSize: 100 });
   const editable = list.items.filter(item => item.editable);
   assert.equal(list.readScope, 'ALL');
   assert.equal(list.editScope, 'DEPT');
@@ -99,17 +99,17 @@ test('公司领导能打开用户管理，但新增、编辑、删除返回 403�
 test('部门管理员只看到本部门及下级，改筛选参数也看不到范围外（USER-01）', async () => {
   const me = await as('DEMO000100');
   assert.equal(scopeOf(me, 'rbac:user:read'), 'DEPT');
-  const mine = await api.listUsers({ size: 100 });
+  const mine = await api.listUsers({ pageSize: 100 });
   assert.ok(mine.items.length > 0);
   assert.ok(mine.items.every(user => user.departmentPath.startsWith('总公司 / 道路工程分公司')));
-  assert.equal((await api.listUsers({ departmentId: 'D03', size: 100 })).total, 0);
+  assert.equal((await api.listUsers({ departmentId: 'D03', pageSize: 100 })).total, 0);
   await assert.rejects(api.getUser('u0004'), { status: 403 });
   await assert.rejects(api.updateUser(mine.items.find(user => user.id !== me.user.id).id, { name: '演示', departmentId: 'D03' }), { status: 403 });
 });
 
 test('部门管理员不能分配管理类角色、不能给范围外用户分配、不能改授权（GRANT-03）', async () => {
   await as('DEMO000100');
-  const target = (await api.listUsers({ departmentId: 'D13', size: 100 })).items[0];
+  const target = (await api.listUsers({ departmentId: 'D13', pageSize: 100 })).items[0];
   await assert.rejects(api.assignRoles(target.id, [...target.roleIds, 'R06'], target.roleVersion), { status: 403 });
   await assert.rejects(api.assignRoles('u0004', ['R05'], 1), { status: 403 });
   await assert.rejects(api.saveRoleGrants('R05', [], 1), { status: 403 });
@@ -126,6 +126,24 @@ test('分配角色整组替换并带版本号；版本不符返回 409 且不做
   const after = await api.getUser('u0004');
   assert.deepEqual(after.roleIds, before.roleIds);
   assert.equal(after.roleVersion, before.roleVersion + 1);
+});
+
+test('角色集合含重复项返回 400 且不做任何写入（API-013）', async () => {
+  await as('admin');
+  const before = await api.getUser('u0004');
+  await assert.rejects(api.assignRoles('u0004', ['R05', 'R05'], before.roleVersion), { status: 400, code: 'VALIDATION' });
+  const after = await api.getUser('u0004');
+  assert.deepEqual(after.roleIds, before.roleIds);
+  assert.equal(after.roleVersion, before.roleVersion);
+});
+
+test('角色编码与表结构一致，分页字段为 page / pageSize', async () => {
+  await as('admin');
+  const roles = await api.listRoles();
+  assert.equal(roles.find(role => role.id === 'R01').code, 'ADMIN');
+  const page = await api.listUsers({ page: 1, pageSize: 5 });
+  assert.equal(page.pageSize, 5);
+  assert.ok(page.items.length <= 5);
 });
 
 test('多角色取最大范围、授权变更立即生效（GRANT-04、GRANT-05）', async () => {

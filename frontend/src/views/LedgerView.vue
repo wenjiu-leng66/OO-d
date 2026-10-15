@@ -25,7 +25,7 @@ const actionScopes = computed(() => placeholderActions.map(item => ({ ...item, s
 
 async function load() {
   loading.value = true; failed.value = false
-  try { result.value = await api.listEmployees({ keyword: keyword.value, page: page.value, size }) }
+  try { result.value = await api.listEmployees({ keyword: keyword.value, page: page.value, pageSize: size }) }
   catch { failed.value = true } finally { loading.value = false }
 }
 function search() { page.value = 1; load() }
