@@ -80,6 +80,20 @@ class NumberCellTest(unittest.TestCase):
         self.assertEqual(ie._number_text("E0001"), "E0001")
 
 
+class GrantScopeTest(unittest.TestCase):
+    """Q38: 部门经理、项目经理的管理类动作限本部门 (含下级), 查看、导出为全部; 其他角色按清单。"""
+
+    def test_managers_manage_only_their_department(self):
+        for rid in (DEPT_MANAGER, PROJECT_MANAGER):
+            self.assertEqual([ie.grant_scope(rid, aid, "ALL") for aid in range(1, 7)],
+                             ["ALL", "DEPT", "DEPT", "DEPT", "ALL", "DEPT"])  # 查看 新增 编辑 审批 导出 删除
+
+    def test_other_roles_follow_the_list(self):
+        for rid in (ADMIN, LEADER, STAFF):
+            self.assertEqual({ie.grant_scope(rid, aid, "ALL") for aid in range(1, 7)}, {"ALL"})
+        self.assertEqual(ie.grant_scope(STAFF, 3, "SELF"), "SELF")
+
+
 class ParseCellTest(unittest.TestCase):
     def setUp(self):
         ie.warnings.clear()
@@ -371,6 +385,12 @@ class EndToEndTest(unittest.TestCase):
         self.assertEqual(stats["grants"], 12 + 9 + 13)
         self.assertEqual(stats["users"], 3)
         self.assertEqual(stats["new_codes"], 3)
+        # 部门经理 发文拟稿 查看/审批: 查看为全部, 审批限本部门; 项目经理 收文登记 view/新增: 新增限本部门
+        self.assertEqual(stats["dept_grants"], 3)
+        self.assertIn(f"({DEPT_MANAGER}, {ie.perm_id(1, 1)}, 'ALL')", sql)
+        self.assertIn(f"({DEPT_MANAGER}, {ie.perm_id(1, 4)}, 'DEPT')", sql)
+        self.assertIn(f"({PROJECT_MANAGER}, {ie.perm_id(2, 2)}, 'DEPT')", sql)
+        self.assertIn(f"({STAFF}, {ie.perm_id(1, 2)}, 'SELF')", sql)
         self.assertIn("'oa:f001:read'", sql)
         self.assertIn("'hr:f003:edit'", sql)
         self.assertIn("(6, 'DEPT_ADMIN', '部门管理员'", sql)  # 平台自己的内置角色

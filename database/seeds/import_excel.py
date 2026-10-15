@@ -7,7 +7,7 @@
 - 权限码 = 系统短码:功能点编号:动作, 如 hr:f046:edit。系统短码来自同目录的 system_codes.csv,
   功能点编号来自同目录的 function_codes.csv (要提交), 清单行序变化时编号不变。
 - 初始密码在运行时输入或用 --initial-password 指定, 不写进仓库; 所有账号首次登录必须修改密码。
-- 清洗规则、组织映射和待老师确认的事项见 docs/database/import-rules.md。
+- 清洗规则、组织映射、数据范围和它们的依据见 docs/database/import-rules.md。
 
 用法 (在仓库根目录执行):
     python database/seeds/import_excel.py --dept data/raw/市政公司部门信息表.xlsx \\
@@ -213,7 +213,7 @@ def parse_cell(cell, where):
     """'查看/编辑本人' -> ({1, 3}, 'SELF');  '全部' -> (全部操作, 'ALL');  '无' -> (set(), 'ALL')"""
     cell = cell.strip()
     if cell == "":
-        warn(f"{where}: 单元格为空, 按'无'处理, 即不授权 (Q-08, 确认前拒绝)")
+        warn(f"{where}: 单元格为空, 按'无'处理, 即不授权 (Q-08)")
         return set(), "ALL"
     if cell == "无":  # Q-10: 只是不授权, 不是显式拒绝
         return set(), "ALL"
@@ -229,6 +229,20 @@ def parse_cell(cell, where):
             raise DataError(f"{where}: 无法识别的权限 '{cell}'")
         ids.add(ACTION_BY_CN[part])
     return ids, scope
+
+
+MANAGE_ACTIONS = {2, 3, 4, 6}  # 新增、编辑、审批、删除; 查看、导出是只读类
+DEPT_SCOPED_ROLES = {ROLE_DEPT_MANAGER, ROLE_PROJECT_MANAGER}
+
+
+def grant_scope(role_id, action_id, cell_scope):
+    """一条授权的数据范围 (Q38): 部门经理、项目经理的管理类动作只限本部门及全部下级部门 (DEPT),
+    查看、导出为全部; 其他角色按清单原样, 含"本人"的格子为 SELF。"""
+    if cell_scope == "SELF":
+        return "SELF"
+    if role_id in DEPT_SCOPED_ROLES and action_id in MANAGE_ACTIONS:
+        return "DEPT"
+    return cell_scope
 
 
 def load_permissions(path, system_codes):
@@ -285,7 +299,7 @@ def load_permissions(path, system_codes):
         for rid, col in role_cols.items():
             action_ids, scope = parse_cell(r[col], f"第{no}行[{r[i_fn]}]/{head[col]}")
             for aid in sorted(action_ids):
-                grants.append((rid, seq, aid, scope))
+                grants.append((rid, seq, aid, grant_scope(rid, aid, scope)))
     for name, (sys_id, code) in system_codes.items():
         if name not in sys_seen:
             warn(f"system_codes.csv 中的系统 {code} {name} 在清单里找不到")
@@ -669,13 +683,14 @@ def run(dept_path, perm_path, emp_path, out_path, initial_password,
     with_mgr = [d for d in depts if d["manager"]]
     stats = {"depts": len(depts), "users": len(users), "systems": len(systems), "modules": len(modules),
              "functions": len(functions), "permissions": len(perms), "grants": len(grants),
-             "new_codes": len(new_codes)}
+             "dept_grants": sum(g[3] == "DEPT" for g in grants), "new_codes": len(new_codes)}
     lines = [
         "== 导入核对 ==",
         f"部门表: {len(depts)} 个部门 (根节点 {root['name']}), 其中 {len(with_mgr)} 个填了负责人",
         f"权限清单: 系统 {len(systems)} / 模块 {len(modules)} / 功能点 {len(functions)}; "
         f"权限 {len(perms)} (功能点 x 6 种动作); 角色授权 {len(grants)} 条, "
-        f"其中仅本人 (SELF) {sum(g[3] == 'SELF' for g in grants)} 条",
+        f"其中本部门 (DEPT) {sum(g[3] == 'DEPT' for g in grants)} 条、仅本人 (SELF) "
+        f"{sum(g[3] == 'SELF' for g in grants)} 条",
         f"功能点编号: 编号表原有 {len(known)} 个, 本次新登记 {len(new_codes)} 个"
         + (f" (已写回 {function_codes_path}, 请提交)" if new_codes else ""),
         (f"员工表: 源数据 {emp_rows} 行 -> 成功 {len(emps)} 行, 失败 {len(failed)} 行" if emp_path

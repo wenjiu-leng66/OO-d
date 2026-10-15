@@ -160,17 +160,17 @@ CREATE TABLE sys_user_role (
 CREATE TABLE sys_role_permission (
     role_id         INT          NOT NULL,
     permission_id   INT          NOT NULL,
-    data_scope      VARCHAR(8)   NOT NULL DEFAULT 'ALL' COMMENT 'ALL全部数据 / SELF仅本人数据(清单中"查看本人""编辑本人")',
+    data_scope      VARCHAR(8)   NOT NULL DEFAULT 'ALL' COMMENT 'ALL全部数据 / DEPT本部门及全部下级部门 / SELF仅本人数据',
     PRIMARY KEY (role_id, permission_id),
     KEY idx_rp_perm (permission_id),
     CONSTRAINT fk_rp_role FOREIGN KEY (role_id)       REFERENCES sys_role (id)       ON DELETE CASCADE,
     CONSTRAINT fk_rp_perm FOREIGN KEY (permission_id) REFERENCES sys_permission (id) ON DELETE CASCADE,
-    CONSTRAINT ck_rp_scope CHECK (data_scope IN ('ALL', 'SELF'))
+    CONSTRAINT ck_rp_scope CHECK (data_scope IN ('ALL', 'DEPT', 'SELF'))
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_0900_ai_ci COMMENT = '角色-权限';
 
 -- -------------------------------------------------------------
 -- 7. 视图: 用户最终拥有的权限 (后端鉴权直接查这个视图)
---    只算启用的用户和启用的角色; 同一权限被多个角色授予时, 取最大范围 (ALL > SELF)
+--    只算启用的用户和启用的角色; 同一权限被多个角色授予时, 取最大范围 (ALL > DEPT > SELF)
 -- -------------------------------------------------------------
 CREATE VIEW v_user_permission AS
 SELECT u.id                                   AS user_id,
@@ -183,7 +183,7 @@ SELECT u.id                                   AS user_id,
        f.name                                 AS function_name,
        a.code                                 AS action_code,
        a.name                                 AS action_name,
-       IF(MAX(rp.data_scope = 'ALL'), 'ALL', 'SELF') AS data_scope
+       ELT(MAX(FIELD(rp.data_scope, 'SELF', 'DEPT', 'ALL')), 'SELF', 'DEPT', 'ALL') AS data_scope
 FROM sys_user u
          JOIN sys_user_role ur       ON ur.user_id = u.id
          JOIN sys_role r             ON r.id = ur.role_id AND r.status = 1

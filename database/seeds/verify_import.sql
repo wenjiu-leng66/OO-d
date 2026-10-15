@@ -16,10 +16,11 @@ UNION ALL SELECT 'sys_action', COUNT(*) FROM sys_action
 UNION ALL SELECT 'sys_permission', COUNT(*) FROM sys_permission
 UNION ALL SELECT 'sys_role_permission', COUNT(*) FROM sys_role_permission;
 
--- 2. 每个角色的人数和授权数 (对应报告里的"角色分配", 以及 SELF 授权条数)
+-- 2. 每个角色的人数和授权数 (对应报告里的"角色分配", 以及 DEPT、SELF 授权条数)
 SELECT r.code,
        (SELECT COUNT(*) FROM sys_user_role ur WHERE ur.role_id = r.id)                                AS users,
        (SELECT COUNT(*) FROM sys_role_permission rp WHERE rp.role_id = r.id)                          AS grants,
+       (SELECT COUNT(*) FROM sys_role_permission rp WHERE rp.role_id = r.id AND rp.data_scope = 'DEPT') AS dept_grants,
        (SELECT COUNT(*) FROM sys_role_permission rp WHERE rp.role_id = r.id AND rp.data_scope = 'SELF') AS self_grants
 FROM sys_role r
 ORDER BY r.sort_no;
