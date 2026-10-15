@@ -83,7 +83,7 @@ erDiagram
     sys_role_permission {
         int role_id PK, FK
         int permission_id PK, FK
-        varchar data_scope "ALL 或 SELF"
+        varchar data_scope "ALL DEPT SELF"
     }
 ```
 
@@ -99,8 +99,8 @@ erDiagram
 | 资源与权限 | `app_system` > `app_module` > `app_function`，`sys_action`，`sys_permission` | 程序按权限码判断，不按显示名称；第一阶段只读，由导入维护（Q22） | RBAC0 |
 | 用户角色 | `sys_user_role` | 组合唯一；整组替换并校验 `sys_user.role_version`（Q22）；RBAC2 起分配时校验约束 | RBAC0 |
 | 角色权限 | `sys_role_permission` | 组合唯一；带数据范围 `data_scope`；整组替换并校验 `sys_role.permission_version`（Q22） | RBAC0 |
-| 有效权限 | 视图 `v_user_permission` | 并集，同一权限码取最大范围，默认拒绝（Q15） | RBAC0 |
-| 角色层级 | 计划新增 `sys_role_inherit(senior_role_id, junior_role_id)`，视图改为递归 CTE | senior 继承 junior；无环；组内建议多父 DAG（Q25，待老师确认 Q-05） | RBAC1 |
+| 有效权限 | 视图 `v_user_permission` | 并集，同一权限码取最大范围 ALL > DEPT > SELF，默认拒绝（Q15） | RBAC0 |
+| 角色层级 | 计划新增 `sys_role_inherit(senior_role_id, junior_role_id)`，视图改为递归 CTE | senior 继承 junior；无环；多父 DAG（Q25，组内已定） | RBAC1 |
 | 约束 | 计划新增约束表 | 静态互斥、动态互斥、基数；区分分配时、激活时校验（Q28、Q31） | RBAC2 |
 | 会话 | 待定 | 登录用户、已激活角色、失效信息（Q32） | 待定 |
 
@@ -170,7 +170,7 @@ erDiagram
 | 3 | DEPT_MANAGER | 部门经理 | 清单“部门经理”列 |
 | 4 | PROJECT_MANAGER | 项目经理 | 清单“项目经理”列 |
 | 5 | STAFF | 普通员工 | 清单“普通员工”列 |
-| 6 | DEPT_ADMIN | 部门管理员 | 平台自己的管理角色，不来自清单。管理本部门及全部下级部门的用户，只能分配业务角色，不能分配管理类角色，也不能修改角色授权（Q10、Q18）。导入时没有授权，它的 `rbac:*` 权限待接口设计阶段确定 |
+| 6 | DEPT_ADMIN | 部门管理员 | 平台自己的管理角色，不来自清单。管理范围与数据范围 DEPT 相同，即本部门及全部下级部门的用户；只能分配业务角色，不能分配管理类角色，也不能修改角色授权（Q10、Q18）。导入时没有授权，它的 `rbac:*` 权限待接口设计阶段确定 |
 
 “管理类角色”指 ADMIN、DEPT_ADMIN，以及以后任何拥有 `rbac:*` 管理权限的角色；部门管理员能否分配某个角色，由后端按这个规则判断，库里不另设字段，避免新建一个带管理权限的角色就绕过限制。
 
@@ -246,7 +246,7 @@ erDiagram
 | --- | --- | --- | --- | --- | --- | --- |
 | role_id | INT | 否 | — | PK `(role_id, permission_id)`；FK `fk_rp_role` → sys_role.id，角色删除时一并删除 | 清单.角色列 | 角色 |
 | permission_id | INT | 否 | — | PK；FK `fk_rp_perm` → sys_permission.id，权限删除时一并删除；`idx_rp_perm` | 清单单元格拆出的每个动作 | 权限 |
-| data_scope | VARCHAR(8) | 否 | 'ALL' | CHECK `ck_rp_scope`：ALL / SELF | 清单单元格是否含“本人”（Q14） | ALL 全部数据，SELF 仅本人数据。功能权限决定能不能用，数据范围决定能看哪些行。是否增加“本部门（含下级）”范围尚在讨论，见“待统一” |
+| data_scope | VARCHAR(8) | 否 | 'ALL' | CHECK `ck_rp_scope`：ALL / DEPT / SELF | 派生：角色列、动作和单元格是否含“本人”（Q14、Q38） | ALL 全部数据；DEPT 用户所在部门（`sys_user.dept_id`）及其全部下级部门的数据；SELF 仅本人数据。功能权限决定能不能用，数据范围决定能看、能改哪些行。导入规则：部门经理、项目经理的新增、编辑、审批、删除为 DEPT，查看、导出为 ALL；系统管理员、公司领导全部为 ALL；普通员工含“本人”的格子为 SELF，其余为 ALL |
 
 ## 视图 v_user_permission 用户有效权限
 
@@ -257,7 +257,7 @@ erDiagram
 | system_name、module_name | app_system、app_module | 用于菜单分组 |
 | function_id、function_name | app_function | — |
 | action_code、action_name | sys_action | — |
-| data_scope | sys_role_permission | 多个角色给了同一权限时取最大范围，ALL 优先于 SELF |
+| data_scope | sys_role_permission | 多个角色给了同一权限时取最大范围，ALL > DEPT > SELF。视图里用 `FIELD` 把范围换成 1/2/3 取 `MAX`，再用 `ELT` 换回名称；只在同一权限码内比较 |
 
 规则：只计算启用的角色；多个角色的权限取并集；视图里查不到即无权限（默认拒绝）。鉴权查询用 `WHERE user_id = ? AND permission_code = ?`，如 `permission_code = 'hr:f046:edit'`。授权变更后下一次请求即按新权限检查（Q17）。RBAC1 加角色层级时只改这个视图（改成递归 CTE），调用方的查询不变。
 
@@ -280,13 +280,10 @@ erDiagram
 
 ## 已定与待统一
 
-已按需求访谈落实到表结构的：权限码格式与动作码（Q12）、工号或手机号登录且手机号不为空时唯一（Q8）、版本号与 409（Q22）、首次登录改密与初始密码不进仓库（Q23）、内置角色与部门管理员（Q9、Q10、Q20）、不做账号类别（Q11）、部门和资源目录第一阶段只读（Q22）。
+已按需求访谈落实到表结构的：权限码格式与动作码（Q12）、工号或手机号登录且手机号不为空时唯一（Q8）、版本号与 409（Q22）、首次登录改密与初始密码不进仓库（Q23）、内置角色与部门管理员（Q9、Q10、Q20）、不做账号类别（Q11）、部门和资源目录第一阶段只读（Q22）、数据范围 ALL / DEPT / SELF 及其导入规则（Q38）。清单清洗口径（问题清单 Q-07 ~ Q-12）和层级多父 DAG（Q-05）已改为组内自定、不再问老师（Q40），依据见 [导入质量规则](import-rules.md)。需求规格说明书第 5.4 节也写了数据范围的导入规则。
 
 | 事项 | 现状 | 需要谁 |
 | --- | --- | --- |
 | 管理后台的 `rbac:*` 权限码 | 清单第 18 个系统里实现的模块（用户管理 f339、角色管理 f340、权限配置 f341、组织架构管理 f342、登录日志 f348、操作日志 f349）的授权要映射成 `rbac:*` 码，映射表在接口设计阶段写进契约（Q19）；落库方式随契约确定 | 成员 3、4、6 |
-| “本部门（含下级）”数据范围 | 需求访谈第 5 轮讨论中。若采用，`data_scope` 增加 DEPT，CHECK 约束随之修改，部门管理员的授权也会用到 | 组长、成员 1 |
 | 密码哈希算法 | 列宽已能容纳 BCrypt、PBKDF2 等格式，最终算法跟随后端 | 成员 4 |
 | 删除用户的方式 | 第一阶段要提供删除用户（Q22），物理删除还是停用后隐藏待定 | 成员 4 |
-| 清单清洗口径 Q-07 ~ Q-12 | 组内建议已定（Q13、Q14、Q16），仍待老师确认，见 [导入质量规则](import-rules.md) | 老师 |
-| 角色层级单父还是多父 Q-05 | 组内建议多父 DAG（Q25），RBAC1 实现 | 老师 |

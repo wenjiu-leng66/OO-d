@@ -17,7 +17,7 @@ python database/seeds/import_excel.py --dept data/raw/市政公司部门信息�
 - 输出 `data/raw/seed_data.sql` 和核对报告 `data/raw/seed_data_report.txt`。二者含员工姓名和密码哈希，留在被 Git 忽略的 `data/raw/`，不提交。
 - 清单里出现新功能点时脚本会停止，确认后加 `--update-codes` 登记编号，并提交更新后的 `function_codes.csv`。
 - 重复执行的行为是重置：先清空 10 张表，再按固定 ID 重建。同一份源表导入两次结果相同，但系统里做过的修改会丢失，集成库导入前先备份。
-- 角色初始化、清单空白和“本人”等口径按组内建议实现，仍待老师确认，见 [导入质量规则](../../docs/database/import-rules.md)。
+- 角色初始化、清单空白、“本人”和本部门范围等口径都是组内已定的规则，依据见 [导入质量规则](../../docs/database/import-rules.md)。
 - 单元测试：`python tests/unit/test_import_excel.py`。
 
 没有原始员工表时，可以用合成样例试跑员工表导入：`--emp data/samples/users.sample.csv`。最小合成输入样例见 [数据样例说明](../../data/samples/README.md)。
