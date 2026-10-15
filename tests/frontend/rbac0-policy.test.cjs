@@ -20,7 +20,8 @@ test('browser classic script exposes the same usable API without CommonJS', () =
   const browser = vm.createContext({});
   vm.runInContext(fs.readFileSync(policyPath, 'utf8'), browser);
   assert.deepEqual(Object.keys(browser.Rbac0).sort(), [
-    'canVisit', 'effectivePermissionCodes', 'hasPermission', 'visibleRoutes'
+    'canVisit', 'effectiveGrants', 'effectivePermissionCodes', 'hasPermission',
+    'permissionScope', 'scopeCovers', 'visibleRoutes', 'widerScope'
   ]);
   assert.equal(browser.Rbac0.hasPermission(session, 'rbac:role:read'), true);
 });
