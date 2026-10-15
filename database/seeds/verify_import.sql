@@ -61,9 +61,10 @@ WHERE p.code <> CONCAT(s.code, ':', f.code, ':', a.code)
 SELECT id, username FROM sys_user WHERE must_change_password <> 1;
 
 -- 8. 从库里还原清单的一行, 与 Excel 对照 (改 WHERE 里的功能点名称抽查其他行)
+--    范围不是 ALL 的动作在后面标出, 如 查看/编辑(DEPT)
 SELECT f.name AS function_name, r.name AS role_name,
-       GROUP_CONCAT(a.name ORDER BY a.id SEPARATOR '/') AS actions,
-       MIN(rp.data_scope) AS data_scope
+       GROUP_CONCAT(CONCAT(a.name, IF(rp.data_scope = 'ALL', '', CONCAT('(', rp.data_scope, ')')))
+                    ORDER BY a.id SEPARATOR '/') AS actions
 FROM app_function f
          JOIN sys_permission p       ON p.function_id = f.id
          JOIN sys_action a           ON a.id = p.action_id

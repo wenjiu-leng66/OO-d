@@ -209,6 +209,28 @@ class EmployeesAndManagersTest(unittest.TestCase):
         self.assertEqual([e["phone"] for e in emps], ["12300000001", None, None])
         self.assertEqual(failed, [(3, "手机号与第2行重复")])
 
+    def test_real_employee_table_headers(self):
+        """员工表的真实列名: 姓名 / 用户名 / 分公司 / 部门 / 岗位 / 电话号码 (没有性别和邮箱)。"""
+        table = [(1, ["姓名", "用户名", "分公司", "部门", "岗位", "电话号码"]),
+                 (2, ["演示己", "DEMO000005", "道路工程分公司", "财务部", "会计", "12300000001"])]
+        emps, failed = ie.build_employees(table, self.by_name, "总公司")
+        self.assertEqual(failed, [])
+        self.assertEqual((emps[0]["username"], emps[0]["phone"], emps[0]["email"], emps[0]["gender"]),
+                         ("DEMO000005", "12300000001", None, None))
+        self.assertEqual(emps[0]["dept_id"], self.by_name["道路工程分公司-财务部"]["id"])
+
+    def test_everyone_in_leader_department_is_leader(self):  # Q41, 与负责人规则叠加
+        emps, _ = self.employees(
+            ["演示甲", "DEMO_ROOT", "总公司", "公司领导", "董事长"],
+            ["演示癸", "DEMO000010", "总公司", "公司领导", "副总经理"],
+            ["演示子", "DEMO000011", "总公司", "综合办公室", "副主任"],  # 副职默认普通员工 (Q42)
+        )
+        users, _ = ie.build_users(self.depts, emps, self.by_id)
+        roles = {u["username"]: u["roles"] for u in users}
+        self.assertEqual(roles["DEMO_ROOT"], {LEADER})  # 既是负责人, 又在公司领导部门
+        self.assertEqual(roles["DEMO000010"], {LEADER})
+        self.assertEqual(roles["DEMO000011"], {STAFF})
+
     def test_managers_link_by_user_id_and_get_roles(self):
         emps, _ = self.employees(
             ["演示甲", "DEMO_ROOT", "总公司", "公司领导", "董事长"],

@@ -25,6 +25,7 @@ import secrets
 import sys
 import zipfile
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal, InvalidOperation
 
 NS = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
@@ -405,7 +406,7 @@ EMP_ALIASES = {  # 员工表的真实列名尚未确认, 按常见写法识别; 
     "dept": ["部门", "所属部门", "部门名称", "department"],
     "position": ["岗位", "职位", "职务", "position"],
     "gender": ["性别", "gender"],
-    "phone": ["电话", "手机", "手机号", "手机号码", "联系电话", "phone"],
+    "phone": ["电话", "电话号码", "手机", "手机号", "手机号码", "联系电话", "phone"],
     "email": ["邮箱", "电子邮箱", "Email", "email"],
 }
 RESERVED_USERNAMES = {"admin", "staff"}
@@ -485,8 +486,11 @@ def load_employees(path, dept_by_name, root_name):
 
 
 # ------------------------------------------------------------------ 用户、负责人与角色
-def manager_role(dept):  # Q-11 成员1 建议: 按管理的部门类型给初始角色, 不看岗位文字
-    if dept["type"] == "HQ" or dept["name"] == "公司领导":
+LEADER_DEPT_NAME = "公司领导"
+
+
+def manager_role(dept):  # Q16: 按管理的部门类型给初始角色, 不看岗位文字
+    if dept["type"] == "HQ" or dept["name"] == LEADER_DEPT_NAME:
         return ROLE_LEADER
     if dept["type"] == "PROJECT":
         return ROLE_PROJECT_MANAGER
@@ -494,7 +498,7 @@ def manager_role(dept):  # Q-11 成员1 建议: 按管理的部门类型给初�
 
 
 def manager_title(dept):
-    if dept["type"] == "HQ" or dept["name"] == "公司领导":
+    if dept["type"] == "HQ" or dept["name"] == LEADER_DEPT_NAME:
         return "总经理"
     if dept["type"] == "BRANCH":
         return "分公司经理"
@@ -573,7 +577,11 @@ def build_users(depts, emps, dept_by_id):
     for d in depts:
         if d["manager_user_id"]:
             users[d["manager_user_id"] - 1]["roles"].add(manager_role(d))
-    for u in users:
+    for u in users:  # Q41: "公司领导"部门的人都是公司领导, 与是否登记为负责人无关
+        dept = dept_by_id.get(u["dept_id"])
+        if dept and dept["name"] == LEADER_DEPT_NAME:
+            u["roles"].add(ROLE_LEADER)
+    for u in users:  # Q42: 其余人 (含副职) 默认普通员工, 需要时由管理员另加角色
         if not u["roles"]:
             u["roles"] = {ROLE_STAFF}
     return users, unresolved
@@ -670,8 +678,10 @@ def run(dept_path, perm_path, emp_path, out_path, initial_password,
         emps, failed = load_employees(emp_path, dept_by_name, root["name"])
         emp_rows = len(emps) + len(failed)
     users, unresolved = build_users(depts, emps, dept_by_id)
-    for u in users:
-        u["password_hash"] = password_hash(initial_password)
+    # 每个哈希约 0.1 秒, 1 万个账号串行要十几分钟; hashlib 计算时释放 GIL, 多线程即可并行
+    with ThreadPoolExecutor() as pool:
+        for u, h in zip(users, pool.map(password_hash, [initial_password] * len(users))):
+            u["password_hash"] = h
 
     out_dir = os.path.dirname(out_path)
     if out_dir:
