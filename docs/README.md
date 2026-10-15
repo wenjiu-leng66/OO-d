@@ -6,6 +6,7 @@
 | 范围与用例 | [范围](requirements/scope.md)、[用例模板](requirements/use-cases.md)、[待确认问题](requirements/questions.md) |
 | UML | [图的准备说明](uml/README.md) |
 | 数据库 | [数据字典草案](database/data-dictionary.md) |
+| 界面设计 | [第一阶段界面原型](design/stage1-ui-prototype.md)、[成员 2 前端约定](design/member2-frontend-contract.md)、[成员 3 RBAC0 设计](design/member3-rbac0-design.md) |
 | 技术决定 | [单仓库与双后端](decisions/0001-monorepo.md) |
 | 分工与排期 | [成员](planning/team.md)、[阶段](planning/milestones.md)、[首批任务](planning/first-tasks.md) |
 | 协作约定 | [API](standards/api-contract.md)、[环境](standards/environment.md) |
