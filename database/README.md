@@ -14,7 +14,7 @@
 
 ## 本地初始化
 
-需要 MySQL 8.0.16 及以上（小组候选 8.4）。命令在仓库根目录执行，PowerShell 与 Bash 通用；`rbac_dev` 换成自己的库名。
+需要 MySQL 8.0.16 及以上（小组定为 8.4）。命令在仓库根目录执行，PowerShell 与 Bash 通用；`rbac_dev` 换成自己的库名。
 
 ```powershell
 mysql -uroot -p -e "CREATE DATABASE rbac_dev DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"
@@ -24,6 +24,6 @@ mysql -uroot -p --default-character-set=utf8mb4 rbac_dev -e "source data/raw/see
 mysql -uroot -p --default-character-set=utf8mb4 rbac_dev -e "source database/seeds/verify_import.sql"
 ```
 
-第三步需要先把原始 Excel 放到 `data/raw/`。没有员工表时，演示账号 admin、E0001（公司领导）、E0002 起（各部门负责人）、staff（普通员工）的初始密码都是 `123456`。
+第三步需要先把原始 Excel 放到 `data/raw/`，运行时会提示输入所有导入账号的初始密码；密码不进仓库，首次登录必须修改。没有员工表时，演示账号是 admin（超级管理员）、E0001（公司领导）、E0002 起（各部门负责人）和 staff（普通员工）。
 
 各成员开发使用独立数据库，结构由迁移文件统一。集成库迁移由指定负责人执行，涉及数据损失的操作先备份并评审。
