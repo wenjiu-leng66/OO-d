@@ -7,7 +7,7 @@
 - 主键：整数自增，`sys_action` 用固定编号；功能点和权限的 ID 由编号表算出，清单调整行序或重复导入时都不变。接口可以把整数 ID 输出成字符串，库结构不受影响。
 - 时间：`DATETIME`，按服务器时区，部署时统一为 Asia/Shanghai。
 - 删除策略：外键的删除行为写在“键 / 约束”列，每张表后再汇总一次。未注明的是 MySQL 默认的 RESTRICT，即有引用时拒绝删除。
-- 来源列：`部门表.X`、`清单.X`、`员工表.X` 分别指《部门信息表》《应用软件功能权限清单》《员工信息表》的列 X（员工表的真实列名待拿到原表后确认）；`派生` 是导入脚本计算的值；`固定` 是脚本内置常量或仓库里的编码表；`系统` 是数据库或应用运行时写入。清洗规则见 [导入质量规则](import-rules.md)。
+- 来源列：`部门表.X`、`清单.X`、`员工表.X` 分别指《部门信息表》《应用软件功能权限清单》《员工信息表》的列 X（员工表的列为姓名、用户名、分公司、部门、岗位、电话号码）；`派生` 是导入脚本计算的值；`固定` 是脚本内置常量或仓库里的编码表；`系统` 是数据库或应用运行时写入。清洗规则见 [导入质量规则](import-rules.md)。
 - 字典里不写真实姓名、电话和密码样例。
 
 ## ER 图
@@ -130,15 +130,15 @@ erDiagram
 | 字段 | 类型 | 可空 | 默认 | 键 / 约束 | 来源 | 说明 |
 | --- | --- | --- | --- | --- | --- | --- |
 | id | INT | 否 | 自增 | PK | 派生 | 用户 ID，admin 固定为 1 |
-| username | VARCHAR(32) | 否 | — | UK `uk_user_username` | 员工表.工号；没有员工表时生成 E0001 起的编号 | 业务唯一标识，登录标识之一（Q8）。admin、staff 是保留账号 |
+| username | VARCHAR(32) | 否 | — | UK `uk_user_username` | 员工表.用户名（SG000001 起）；没有员工表时生成 E0001 起的编号 | 业务唯一标识（工号），登录标识之一（Q8）。admin 是预置超级管理员；admin、staff 是保留名，staff 只在没有员工表的演示方案里生成（Q43） |
 | password_hash | VARCHAR(255) | 否 | — | — | 派生：导入时指定的初始密码的哈希 | 带算法前缀，导入脚本生成 `{pbkdf2@SpringSecurity_v5_8}` 加 96 位十六进制（16 字节盐 + 32 字节哈希）。初始密码不进仓库；不存明文，不返回前端。最终算法与成员 4 统一（Q23） |
 | must_change_password | TINYINT | 否 | 1 | CHECK `ck_user_must_change` | 系统 | 1 表示下次登录必须先修改密码。导入和管理员重置密码后为 1，本人改密后为 0（Q23） |
-| real_name | VARCHAR(32) | 否 | — | `idx_user_real_name` | 员工表.姓名 | 允许重名，重名不等于同一账号 |
-| dept_id | INT | 是 | NULL | FK `fk_user_dept` → sys_dept.id，被引用的部门不能删除；`idx_user_dept` | 员工表.公司 + 部门，按组织映射规则 | 只有 admin 为空 |
+| real_name | VARCHAR(32) | 否 | — | `idx_user_real_name` | 员工表.姓名 | 允许重名，重名不等于同一账号（员工表有 1,596 个姓名重复出现） |
+| dept_id | INT | 是 | NULL | FK `fk_user_dept` → sys_dept.id，被引用的部门不能删除；`idx_user_dept` | 员工表.分公司 + 部门，按组织映射规则 | 只有 admin 为空 |
 | position | VARCHAR(32) | 是 | NULL | — | 员工表.岗位 | 只展示，不用于授权（Q16） |
-| gender | CHAR(1) | 是 | NULL | CHECK `ck_user_gender` | 员工表.性别 | M / F，由“男/女”转换，无法识别时置空 |
-| phone | VARCHAR(20) | 是 | NULL | UK `uk_user_phone` | 员工表.电话 | 手机号，登录标识之一；可以为空，不为空时唯一（Q8）。按文本存，保留前导 0 |
-| email | VARCHAR(64) | 是 | NULL | — | 员工表.邮箱 | — |
+| gender | CHAR(1) | 是 | NULL | CHECK `ck_user_gender` | 员工表.性别（现有员工表没有这一列，导入后为空） | M / F，由“男/女”转换，无法识别时置空 |
+| phone | VARCHAR(20) | 是 | NULL | UK `uk_user_phone` | 员工表.电话号码 | 手机号，登录标识之一；可以为空，不为空时唯一（Q8）。按文本存，保留前导 0 |
+| email | VARCHAR(64) | 是 | NULL | — | 员工表.邮箱（现有员工表没有这一列） | 默认为空，员工台账里可由本人或有编辑权限的人填写（Q43） |
 | status | TINYINT | 否 | 1 | CHECK `ck_user_status` | 系统 | 1 启用，0 停用；停用用户在视图中没有任何权限 |
 | role_version | INT | 否 | 1 | — | 系统 | 角色集合版本号。整组替换用户角色时，请求带上读到的版本，与库里不一致返回 409，一致则替换并加 1（Q22） |
 | last_login_at | DATETIME | 是 | NULL | — | 系统 | 登录成功时更新 |

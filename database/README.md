@@ -19,11 +19,13 @@
 ```powershell
 mysql -uroot -p -e "CREATE DATABASE rbac_dev DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"
 mysql -uroot -p --default-character-set=utf8mb4 rbac_dev -e "source database/migrations/V001__create_core_tables.sql"
-python database/seeds/import_excel.py --dept data/raw/市政公司部门信息表.xlsx --perm data/raw/市政公司应用软件功能权限清单.xlsx
+python database/seeds/import_excel.py --dept data/raw/市政公司部门信息表.xlsx --perm data/raw/市政公司应用软件功能权限清单.xlsx --emp data/raw/市政公司员工信息表.xlsx
 mysql -uroot -p --default-character-set=utf8mb4 rbac_dev -e "source data/raw/seed_data.sql"
 mysql -uroot -p --default-character-set=utf8mb4 rbac_dev -e "source database/seeds/verify_import.sql"
 ```
 
-第三步需要先把原始 Excel 放到 `data/raw/`，运行时会提示输入所有导入账号的初始密码；密码不进仓库，首次登录必须修改。没有员工表时，演示账号是 admin（超级管理员）、E0001（公司领导）、E0002 起（各部门负责人）和 staff（普通员工）。
+第三步需要先把三份原始 Excel 放到 `data/raw/`，运行时会提示输入所有导入账号的初始密码；密码不进仓库，首次登录必须修改。1 万个账号的密码哈希约需 2 分钟。
+
+演示账号：admin（超级管理员）、SG000001（董事长，公司领导）、SG000011（综合办公室主任，部门经理）、SG000013（综合办公室干事，普通员工）、SG000281（道路工程分公司第一项目经理部项目经理）。各账号演示的权限见 [导入质量规则](../docs/database/import-rules.md) 第 9 节。不加 `--emp` 时改用部门表的负责人生成 E0001 起的账号和演示员工 staff。
 
 各成员开发使用独立数据库，结构由迁移文件统一。集成库迁移由指定负责人执行，涉及数据损失的操作先备份并评审。
