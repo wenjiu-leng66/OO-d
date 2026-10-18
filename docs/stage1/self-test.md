@@ -23,6 +23,8 @@ Windows有多个Python时，先确认上述`python --version`满足要求；可�
 
 ```powershell
 python scripts/check_repository.py
+python -m pip install -r scripts/requirements-validation.txt
+python scripts/check_openapi.py
 python -m unittest discover -s tests/unit -p "test_*.py"
 node --test tests/frontend/*.test.cjs
 mvn -f backend-procedural/pom.xml clean verify
@@ -61,6 +63,7 @@ docker compose --env-file deploy/.env -f deploy/compose.yaml up -d --build --wai
 
 ```powershell
 python scripts/smoke_http.py --base-url http://127.0.0.1 --env-file deploy/.env --check-web
+python scripts/check_openapi.py --base-url http://127.0.0.1
 ```
 
 脚本使用真实 Cookie，会创建并清理临时合成账号。运行前确认 `RBAC_DEMO_ENABLED=true`，且该实例未装载真实课程员工数据。它从本地环境文件读取初始密码，不在命令行显示密码。检查失败应退出非零，不能把部分 PASS 当作整体通过。

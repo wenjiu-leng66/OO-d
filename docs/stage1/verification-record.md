@@ -8,7 +8,7 @@
 | --- | --- |
 | 日期 | 2026-10-18（集成检查；时间使用 Asia/Shanghai） |
 | 集成分支 | `integration/stage1` |
-| 被测源码 SHA | 待最终提交后填写；集成中的未提交文件应随记录归档 |
+| 被测功能源码 SHA | `aaf64ec953bd7aed9c773487c66cb32be20e3db9`；后续若只补文档，功能测试版本保持此记录 |
 | 基础来源 | 见 [合并记账](merge-sources.md) |
 | 本地环境 | Windows；JBR21.0.10、Maven3.9.11、Node24.18.0、MySQL8.4.8、Bundled Python3.12.14；独立后端18080、MySQL33067、库rbac_stage1，本地浏览器入口5174 |
 | 服务器 / 外网 URL | 按用户最新要求，本轮不连接或操作服务器；脚本已准备，待用户自行部署 |
