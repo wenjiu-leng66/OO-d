@@ -1,48 +1,81 @@
 package com.municipal.rbac.procedural.controller;
 
-import com.municipal.rbac.procedural.dto.ReplacePermissionsRequest;
+import com.municipal.rbac.procedural.dto.Requests;
 import com.municipal.rbac.procedural.service.RoleService;
-import com.municipal.rbac.procedural.vo.PageVO;
-import com.municipal.rbac.procedural.vo.RolePermissionsVO;
-import com.municipal.rbac.procedural.vo.RoleVO;
 import jakarta.servlet.http.HttpSession;
 import jakarta.validation.Valid;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PutMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import java.util.Map;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.*;
 
-/** 角色查询与角色权限替换。 */
 @RestController
 @RequestMapping("/api/v1/roles")
 public class RoleController {
+  private final RoleService roles;
 
-    private final RoleService roleService;
+  public RoleController(RoleService roles) {
+    this.roles = roles;
+  }
 
-    public RoleController(RoleService roleService) {
-        this.roleService = roleService;
-    }
+  @GetMapping
+  public Map<String, Object> list(
+      @RequestParam(required = false) String keyword,
+      @RequestParam(defaultValue = "1") int page,
+      @RequestParam(defaultValue = "20") int pageSize,
+      HttpSession session) {
+    return roles.list(session, keyword, page, pageSize);
+  }
 
-    @GetMapping
-    public PageVO<RoleVO> list(@RequestParam(required = false) String keyword,
-                               @RequestParam(defaultValue = "1") int page,
-                               @RequestParam(defaultValue = "20") int pageSize,
-                               HttpSession session) {
-        return roleService.list(session, keyword, page, pageSize);
-    }
+  @GetMapping("/{id}")
+  public Map<String, Object> detail(@PathVariable String id, HttpSession session) {
+    return roles.detail(session, id);
+  }
 
-    @GetMapping("/{id}/permissions")
-    public RolePermissionsVO permissions(@PathVariable String id, HttpSession session) {
-        return roleService.rolePermissions(session, id);
-    }
+  @PostMapping
+  @ResponseStatus(HttpStatus.CREATED)
+  public Map<String, Object> create(
+      @Valid @RequestBody Requests.CreateRole body, HttpSession session) {
+    return roles.create(session, body);
+  }
 
-    @PutMapping("/{id}/permissions")
-    public RolePermissionsVO replacePermissions(@PathVariable String id,
-                                                @Valid @RequestBody ReplacePermissionsRequest request,
-                                                HttpSession session) {
-        return roleService.replacePermissions(session, id, request);
-    }
+  @PatchMapping("/{id}")
+  public Map<String, Object> update(
+      @PathVariable String id, @Valid @RequestBody Requests.UpdateRole body, HttpSession session) {
+    return roles.update(session, id, body);
+  }
+
+  @PatchMapping("/{id}/status")
+  public Map<String, Object> status(
+      @PathVariable String id, @Valid @RequestBody Requests.Enabled body, HttpSession session) {
+    return roles.status(session, id, body);
+  }
+
+  @DeleteMapping("/{id}")
+  @ResponseStatus(HttpStatus.NO_CONTENT)
+  public void delete(
+      @PathVariable String id,
+      @RequestParam(defaultValue = "false") boolean confirm,
+      HttpSession session) {
+    roles.delete(session, id, confirm);
+  }
+
+  @GetMapping("/{id}/users")
+  public Map<String, Object> users(
+      @PathVariable String id,
+      @RequestParam(defaultValue = "1") int page,
+      @RequestParam(defaultValue = "20") int pageSize,
+      HttpSession session) {
+    return roles.roleUsers(session, id, page, pageSize);
+  }
+
+  @GetMapping("/{id}/permissions")
+  public Map<String, Object> permissions(@PathVariable String id, HttpSession session) {
+    return roles.rolePermissions(session, id);
+  }
+
+  @PutMapping("/{id}/permissions")
+  public Map<String, Object> replace(
+      @PathVariable String id, @Valid @RequestBody Requests.Grants body, HttpSession session) {
+    return roles.replacePermissions(session, id, body);
+  }
 }

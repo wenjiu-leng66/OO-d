@@ -1,42 +1,62 @@
 package com.municipal.rbac.procedural.mapper;
 
 import com.municipal.rbac.procedural.po.DepartmentPO;
+import java.util.*;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
 
-import java.util.List;
-import java.util.Optional;
-
-/** 部门表（departments）的数据访问。 */
 @Repository
 public class DepartmentMapper {
+  private final JdbcTemplate jdbc;
 
-    private static final RowMapper<DepartmentPO> MAPPER = (rs, i) -> new DepartmentPO(
-            rs.getString("id"),
-            rs.getString("name"),
-            rs.getString("branch"),
-            rs.getString("parent_id"),
-            rs.getString("manager_id"));
+  public DepartmentMapper(JdbcTemplate jdbc) {
+    this.jdbc = jdbc;
+  }
 
-    private final JdbcTemplate jdbc;
+  public List<DepartmentPO> findAll() {
+    return jdbc.query(
+        "SELECT * FROM sys_dept ORDER BY sort_no,id",
+        (r, i) ->
+            new DepartmentPO(
+                r.getString("id"),
+                r.getString("name"),
+                r.getString("short_name"),
+                r.getString("dept_type"),
+                r.getString("parent_id"),
+                r.getString("manager_user_id")));
+  }
 
-    public DepartmentMapper(JdbcTemplate jdbc) {
-        this.jdbc = jdbc;
-    }
+  public Optional<DepartmentPO> findById(String id) {
+    if (!Ids.valid(id)) return Optional.empty();
+    return jdbc
+        .query(
+            "SELECT * FROM sys_dept WHERE id=?",
+            (r, i) ->
+                new DepartmentPO(
+                    r.getString("id"),
+                    r.getString("name"),
+                    r.getString("short_name"),
+                    r.getString("dept_type"),
+                    r.getString("parent_id"),
+                    r.getString("manager_user_id")),
+            id)
+        .stream()
+        .findFirst();
+  }
 
-    public List<DepartmentPO> findAll() {
-        return jdbc.query("SELECT id, name, branch, parent_id, manager_id FROM departments ORDER BY id", MAPPER);
-    }
-
-    public Optional<DepartmentPO> findById(String id) {
-        return jdbc.query("SELECT id, name, branch, parent_id, manager_id FROM departments WHERE id = ?",
-                        MAPPER, id)
-                .stream().findFirst();
-    }
-
-    public long countEmployees(String departmentId) {
-        Long n = jdbc.queryForObject("SELECT COUNT(*) FROM users WHERE department_id = ?", Long.class, departmentId);
-        return n == null ? 0L : n;
-    }
+  public Set<String> subtree(String id) {
+    Set<String> found = new LinkedHashSet<>();
+    if (id == null) return found;
+    List<DepartmentPO> ds = findAll();
+    if (ds.stream().noneMatch(d -> d.id().equals(id))) return found;
+    found.add(id);
+    boolean changed;
+    do {
+      changed = false;
+      for (var d : ds)
+        if (d.parentId() != null && found.contains(d.parentId()) && found.add(d.id()))
+          changed = true;
+    } while (changed);
+    return found;
+  }
 }

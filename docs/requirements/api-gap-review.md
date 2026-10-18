@@ -1,5 +1,7 @@
 # 第一阶段 API 草案差异清单
 
+集成状态（2026-10-18）：本页保留2026-10-15的评审输入。差异已在[OpenAPI 0.3.0](../../api/openapi.yaml)及[API约定](../standards/api-contract.md)定稿：Cookie/username/大写范围/首次改密/映射/版本号。具体路径以契约为准（例如PATCH /me/password、/ledger/employees）；不是下文所有建议都原样采用。[覆盖表](../stage1/requirement-coverage.md)和[验证记录](../stage1/verification-record.md)分别记录实现入口与实测，不能把评审关闭理解为测试通过。
+
 状态：2026-10-15，成员 1 整理，供成员 6 修改 OpenAPI 时参考。本文只列差异和建议，不改动成员 6 的分支和文件；采纳与否、具体写法由成员 6 决定。
 
 ## 对照来源

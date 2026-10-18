@@ -1,164 +1,178 @@
 package com.municipal.rbac.procedural.mapper;
 
 import com.municipal.rbac.procedural.po.UserPO;
-import com.municipal.rbac.procedural.po.UserRolePO;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.RowMapper;
+import java.util.*;
+import org.springframework.jdbc.core.*;
+import org.springframework.jdbc.support.*;
 import org.springframework.stereotype.Repository;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Optional;
-
-/** 用户表（users）与用户角色关联表（user_roles）的数据访问。只返回 PO，不组装展示字段。 */
 @Repository
 public class UserMapper {
+  private final JdbcTemplate jdbc;
 
-    private static final RowMapper<UserPO> MAPPER = (rs, i) -> new UserPO(
-            rs.getString("id"),
-            rs.getString("name"),
-            rs.getString("employee_no"),
-            rs.getString("phone"),
-            rs.getString("department_id"),
-            rs.getString("position"),
-            rs.getString("account_type"),
-            rs.getString("status"),
-            rs.getString("password_hash"),
-            rs.getInt("role_version"));
+  public UserMapper(JdbcTemplate jdbc) {
+    this.jdbc = jdbc;
+  }
 
-    private static final String SELECT_USER =
-            "SELECT id, name, employee_no, phone, department_id, position, account_type, status, "
-                    + "password_hash, role_version FROM users ";
+  private static final RowMapper<UserPO> ROW =
+      (r, i) ->
+          new UserPO(
+              r.getString("id"),
+              r.getString("username"),
+              r.getString("real_name"),
+              r.getString("dept_id"),
+              r.getString("position"),
+              r.getString("phone"),
+              r.getString("email"),
+              r.getInt("status") == 1,
+              r.getString("password_hash"),
+              r.getInt("must_change_password") == 1,
+              r.getInt("role_version"));
 
-    private final JdbcTemplate jdbc;
+  public Optional<UserPO> findById(String id) {
+    if (!Ids.valid(id)) return Optional.empty();
+    return jdbc.query("SELECT * FROM sys_user WHERE id=?", ROW, id).stream().findFirst();
+  }
 
-    public UserMapper(JdbcTemplate jdbc) {
-        this.jdbc = jdbc;
-    }
+  public Optional<UserPO> findByAccount(String account) {
+    return jdbc
+        .query("SELECT * FROM sys_user WHERE username=? OR phone=?", ROW, account, account)
+        .stream()
+        .findFirst();
+  }
 
-    public Optional<UserPO> findByAccount(String account) {
-        return jdbc.query(SELECT_USER + "WHERE employee_no = ? OR phone = ?", MAPPER, account, account)
-                .stream().findFirst();
-    }
+  public List<UserPO> findAll() {
+    return jdbc.query("SELECT * FROM sys_user ORDER BY id", ROW);
+  }
 
-    public Optional<UserPO> findById(String id) {
-        return jdbc.query(SELECT_USER + "WHERE id = ?", MAPPER, id)
-                .stream().findFirst();
-    }
+  public List<String> roleIds(String id, boolean enabledOnly) {
+    return jdbc.queryForList(
+        "SELECT r.id FROM sys_user_role ur JOIN sys_role r ON r.id=ur.role_id WHERE ur.user_id=?"
+            + (enabledOnly ? " AND r.status=1" : "")
+            + " ORDER BY r.id",
+        String.class,
+        id);
+  }
 
-    public Optional<UserPO> findByEmployeeNo(String employeeNo) {
-        return jdbc.query(SELECT_USER + "WHERE employee_no = ?", MAPPER, employeeNo)
-                .stream().findFirst();
-    }
+  public boolean hasRoleCode(String id, String code) {
+    return jdbc.queryForObject(
+            "SELECT COUNT(*) FROM sys_user_role ur JOIN sys_role r ON r.id=ur.role_id WHERE"
+                + " ur.user_id=? AND r.code=?",
+            Integer.class,
+            id,
+            code)
+        > 0;
+  }
 
-    public Optional<UserPO> findByPhone(String phone) {
-        return jdbc.query(SELECT_USER + "WHERE phone = ?", MAPPER, phone)
-                .stream().findFirst();
-    }
+  public String insert(
+      String username,
+      String name,
+      String dept,
+      String position,
+      String phone,
+      String email,
+      String hash) {
+    KeyHolder key = new GeneratedKeyHolder();
+    jdbc.update(
+        c -> {
+          var ps =
+              c.prepareStatement(
+                  "INSERT INTO"
+                      + " sys_user(username,real_name,dept_id,position,phone,email,password_hash,must_change_password)"
+                      + " VALUES(?,?,?,?,?,?,?,1)",
+                  new String[] {"id"});
+          Object[] a = {username, name, dept, position, phone, email, hash};
+          for (int i = 0; i < a.length; i++) ps.setObject(i + 1, a[i]);
+          return ps;
+        },
+        key);
+    return key.getKey().toString();
+  }
 
-    public List<UserPO> findPage(String keyword, String departmentId, String accountType, int offset, int limit) {
-        StringBuilder sql = new StringBuilder(SELECT_USER).append("WHERE 1=1 ");
-        List<Object> args = new ArrayList<>();
-        if (keyword != null && !keyword.isBlank()) {
-            sql.append("AND (name LIKE ? OR employee_no LIKE ? OR position LIKE ?) ");
-            String like = "%" + keyword.trim() + "%";
-            args.add(like);
-            args.add(like);
-            args.add(like);
-        }
-        if (departmentId != null && !departmentId.isBlank()) {
-            sql.append("AND department_id = ? ");
-            args.add(departmentId.trim());
-        }
-        if (accountType != null && !accountType.isBlank()) {
-            sql.append("AND account_type = ? ");
-            args.add(accountType.trim());
-        }
-        sql.append("ORDER BY id LIMIT ? OFFSET ?");
-        args.add(limit);
-        args.add(offset);
-        return jdbc.query(sql.toString(), MAPPER, args.toArray());
-    }
+  public boolean usernameExists(String value) {
+    return jdbc.queryForObject(
+            "SELECT COUNT(*) FROM sys_user WHERE username=?", Integer.class, value)
+        > 0;
+  }
 
-    public long count(String keyword, String departmentId, String accountType) {
-        StringBuilder sql = new StringBuilder("SELECT COUNT(*) FROM users WHERE 1=1 ");
-        List<Object> args = new ArrayList<>();
-        if (keyword != null && !keyword.isBlank()) {
-            sql.append("AND (name LIKE ? OR employee_no LIKE ? OR position LIKE ?) ");
-            String like = "%" + keyword.trim() + "%";
-            args.add(like);
-            args.add(like);
-            args.add(like);
-        }
-        if (departmentId != null && !departmentId.isBlank()) {
-            sql.append("AND department_id = ? ");
-            args.add(departmentId.trim());
-        }
-        if (accountType != null && !accountType.isBlank()) {
-            sql.append("AND account_type = ? ");
-            args.add(accountType.trim());
-        }
-        Long count = jdbc.queryForObject(sql.toString(), Long.class, args.toArray());
-        return count == null ? 0L : count;
-    }
+  public boolean phoneExists(String value, String except) {
+    return value != null
+        && jdbc.queryForObject(
+                "SELECT COUNT(*) FROM sys_user WHERE phone=? AND id<>?",
+                Integer.class,
+                value,
+                except == null ? "0" : except)
+            > 0;
+  }
 
-    public void insert(UserPO user) {
-        jdbc.update("INSERT INTO users (id, name, employee_no, phone, department_id, position, account_type, "
-                        + "status, password_hash, role_version) VALUES (?,?,?,?,?,?,?,?,?,?)",
-                user.id(), user.name(), user.employeeNo(), user.phone(), user.departmentId(),
-                user.position(), user.accountType(), user.status(), user.passwordHash(), user.roleVersion());
-    }
+  public void update(
+      String id, String name, String dept, String position, String phone, String email) {
+    jdbc.update(
+        "UPDATE sys_user SET"
+            + " real_name=?,dept_id=?,position=?,phone=?,email=?,updated_at=CURRENT_TIMESTAMP WHERE"
+            + " id=?",
+        name,
+        dept,
+        position,
+        phone,
+        email,
+        id);
+  }
 
-    public int updateStatus(String id, String status) {
-        return jdbc.update("UPDATE users SET status = ? WHERE id = ?", status, id);
-    }
+  public void updateContact(String id, String phone, String email) {
+    jdbc.update(
+        "UPDATE sys_user SET phone=?,email=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+        phone,
+        email,
+        id);
+  }
 
-    public int deleteById(String id) {
-        return jdbc.update("DELETE FROM users WHERE id = ?", id);
-    }
+  public void status(String id, boolean enabled) {
+    jdbc.update(
+        "UPDATE sys_user SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+        enabled ? 1 : 0,
+        id);
+  }
 
-    public void deleteUserRoles(String userId) {
-        jdbc.update("DELETE FROM user_roles WHERE user_id = ?", userId);
-    }
+  public void password(String id, String hash, boolean mustChange) {
+    jdbc.update(
+        "UPDATE sys_user SET password_hash=?,must_change_password=?,updated_at=CURRENT_TIMESTAMP"
+            + " WHERE id=?",
+        hash,
+        mustChange ? 1 : 0,
+        id);
+  }
 
-    public void insertUserRole(String userId, String roleId) {
-        jdbc.update("INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)", userId, roleId);
-    }
+  public void loginTime(String id) {
+    jdbc.update("UPDATE sys_user SET last_login_at=CURRENT_TIMESTAMP WHERE id=?", id);
+  }
 
-    /** 用户已分配的全部角色行（不展开角色信息、不过滤启用状态）。 */
-    public List<UserRolePO> findUserRoleRows(String userId) {
-        return jdbc.query("SELECT user_id, role_id FROM user_roles WHERE user_id = ? ORDER BY role_id",
-                (rs, i) -> new UserRolePO(rs.getString("user_id"), rs.getString("role_id")), userId);
-    }
+  public void delete(String id) {
+    jdbc.update("UPDATE sys_dept SET manager_user_id=NULL WHERE manager_user_id=?", id);
+    jdbc.update("DELETE FROM sys_user_role WHERE user_id=?", id);
+    jdbc.update("DELETE FROM sys_user WHERE id=?", id);
+  }
 
-    /** 已分配且启用的角色 ID（用于有效权限计算）。 */
-    public List<String> findEnabledRoleIds(String userId) {
-        return jdbc.queryForList(
-                "SELECT r.id FROM user_roles ur JOIN roles r ON ur.role_id = r.id "
-                        + "WHERE ur.user_id = ? AND r.enabled = TRUE ORDER BY r.id",
-                String.class, userId);
-    }
+  /**
+   * CAS is the first write in the transaction; a competing writer waits, then sees zero updated
+   * rows.
+   */
+  public boolean compareAndIncrement(String id, int version) {
+    return jdbc.update(
+            "UPDATE sys_user SET role_version=role_version+1 WHERE id=? AND role_version=?",
+            id,
+            version)
+        == 1;
+  }
 
-    public int roleVersion(String userId) {
-        Integer v = jdbc.queryForObject("SELECT role_version FROM users WHERE id = ?", Integer.class, userId);
-        return v == null ? 0 : v;
-    }
+  public int currentRoleVersion(String id) {
+    return jdbc.queryForObject(
+        "SELECT role_version FROM sys_user WHERE id=? FOR UPDATE", Integer.class, id);
+  }
 
-    /** 原子替换用户角色集合并递增版本（调用方需在事务中）。 */
-    public void replaceRoles(String userId, List<String> roleIds, int newVersion) {
-        deleteUserRoles(userId);
-        for (String roleId : roleIds) {
-            insertUserRole(userId, roleId);
-        }
-        jdbc.update("UPDATE users SET role_version = ? WHERE id = ?", newVersion, userId);
-    }
-
-    /** 判断用户是否拥有指定角色码（用于保护超级管理员账号）。 */
-    public boolean hasRoleCode(String userId, String roleCode) {
-        Integer n = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM user_roles ur JOIN roles r ON ur.role_id = r.id "
-                        + "WHERE ur.user_id = ? AND r.code = ?",
-                Integer.class, userId, roleCode);
-        return n != null && n > 0;
-    }
+  public void replaceRoles(String id, List<String> roles) {
+    jdbc.update("DELETE FROM sys_user_role WHERE user_id=?", id);
+    for (String role : roles)
+      jdbc.update("INSERT INTO sys_user_role(user_id,role_id) VALUES(?,?)", id, role);
+  }
 }

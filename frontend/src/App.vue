@@ -31,6 +31,14 @@ async function onIdentity(username) {
 </script>
 
 <template>
+  <div class="stage1-notice" role="note">
+    <span><strong>第一阶段 · 界面原型</strong> 合成数据演示，刷新后恢复</span>
+    <nav aria-label="第一阶段验收入口">
+      <a href="/swagger-ui/index.html?url=/api-design/openapi.yaml" target="_blank" rel="noopener">后端接口调试</a>
+      <a href="/api-design/openapi.yaml" target="_blank" rel="noopener">API 设计</a>
+      <a href="/stage1/" target="_blank" rel="noopener">验收说明</a>
+    </nav>
+  </div>
   <el-container v-if="!bare" class="app-shell">
     <el-aside width="248px" class="sidebar">
       <div class="brand"><span class="brand-mark">市</span><span>市政权限管理<small>RBAC Permission System</small></span></div>

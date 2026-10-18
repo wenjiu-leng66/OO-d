@@ -1,59 +1,72 @@
 package com.municipal.rbac.procedural.service;
 
-import com.municipal.rbac.procedural.dto.LoginRequest;
+import static com.municipal.rbac.procedural.vo.Views.map;
+
+import com.municipal.rbac.procedural.dto.Requests;
 import com.municipal.rbac.procedural.error.ApiException;
-import com.municipal.rbac.procedural.mapper.DepartmentMapper;
 import com.municipal.rbac.procedural.mapper.UserMapper;
-import com.municipal.rbac.procedural.po.UserPO;
-import com.municipal.rbac.procedural.vo.LoginVO;
 import jakarta.servlet.http.HttpSession;
+import java.util.Map;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
-/** 认证过程：校验账号密码与状态，登记会话并返回身份与有效权限摘要。 */
 @Service
 public class AuthService {
+  private final UserMapper users;
+  private final PasswordEncoder passwords;
+  private final AuthorizationService authorization;
+  private final MeService me;
+  private final String dummyHash;
 
-    private final UserMapper userMapper;
-    private final DepartmentMapper departmentMapper;
-    private final PasswordEncoder passwordEncoder;
-    private final AuthorizationService authorization;
+  public AuthService(
+      UserMapper users,
+      PasswordEncoder passwords,
+      AuthorizationService authorization,
+      MeService me) {
+    this.users = users;
+    this.passwords = passwords;
+    this.authorization = authorization;
+    this.me = me;
+    this.dummyHash = passwords.encode("unused-constant-time-comparison");
+  }
 
-    public AuthService(UserMapper userMapper,
-                       DepartmentMapper departmentMapper,
-                       PasswordEncoder passwordEncoder,
-                       AuthorizationService authorization) {
-        this.userMapper = userMapper;
-        this.departmentMapper = departmentMapper;
-        this.passwordEncoder = passwordEncoder;
-        this.authorization = authorization;
+  public Map<String, Object> login(Requests.Login request, HttpSession session) {
+    session.removeAttribute(AuthorizationService.SESSION_USER);
+    session.removeAttribute(AuthorizationService.SESSION_CREDENTIAL);
+    var user = users.findByAccount(request.account().trim()).orElse(null);
+    boolean matches = false;
+    try {
+      matches =
+          passwords.matches(request.password(), user == null ? dummyHash : user.passwordHash());
+    } catch (IllegalArgumentException ignored) {
     }
+    if (user == null || !user.enabled() || !matches)
+      throw ApiException.unauthorized("INVALID_CREDENTIALS", "用户名或密码错误");
+    session.setAttribute(AuthorizationService.SESSION_USER, user.id());
+    session.setAttribute(AuthorizationService.SESSION_CREDENTIAL, user.passwordHash());
+    users.loginTime(user.id());
+    return map(
+        "user",
+        me.me(session),
+        "permissionCodes",
+        authorization.effectivePermissions(user.id()).permissionCodes(),
+        "mustChangePassword",
+        user.mustChangePassword());
+  }
 
-    public LoginVO login(LoginRequest request, HttpSession session) {
-        UserPO user = userMapper.findByAccount(request.account().trim())
-                .orElseThrow(() -> ApiException.unauthorized("INVALID_CREDENTIALS", "账号或密码错误。"));
-        if (!passwordEncoder.matches(request.password(), user.passwordHash())) {
-            throw ApiException.unauthorized("INVALID_CREDENTIALS", "账号或密码错误。");
-        }
-        if (!"active".equals(user.status())) {
-            throw ApiException.forbidden("ACCOUNT_DISABLED", "账号已停用，请联系管理员。");
-        }
-        session.setAttribute(AuthorizationService.SESSION_USER, user.id());
-        var permissions = authorization.effectivePermissions(user.id());
-        String departmentName = departmentName(user.departmentId());
-        return new LoginVO(
-                new LoginVO.UserSummary(user.id(), user.name(), user.employeeNo(), departmentName),
-                permissions.permissionCodes());
-    }
+  public void logout(HttpSession session) {
+    authorization.current(session);
+    session.invalidate();
+  }
 
-    public void logout(HttpSession session) {
-        session.invalidate();
-    }
-
-    private String departmentName(String departmentId) {
-        if (departmentId == null) {
-            return null;
-        }
-        return departmentMapper.findById(departmentId).map(d -> d.name()).orElse(null);
-    }
+  public void password(HttpSession session, Requests.Password request) {
+    var user = authorization.current(session);
+    if (!passwords.matches(request.oldPassword(), user.passwordHash()))
+      throw ApiException.badRequest("BAD_OLD_PASSWORD", "旧密码错误。");
+    if (request.oldPassword().equals(request.newPassword()))
+      throw ApiException.badRequest("VALIDATION", "新密码不能与旧密码相同。");
+    String hash = passwords.encode(request.newPassword());
+    users.password(user.id(), hash, false);
+    session.setAttribute(AuthorizationService.SESSION_CREDENTIAL, hash);
+  }
 }

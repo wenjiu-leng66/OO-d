@@ -1,63 +1,96 @@
 package com.municipal.rbac.procedural.service;
 
-import com.municipal.rbac.procedural.mapper.DepartmentMapper;
-import com.municipal.rbac.procedural.mapper.UserMapper;
-import com.municipal.rbac.procedural.po.DepartmentPO;
-import com.municipal.rbac.procedural.vo.DepartmentNodeVO;
+import static com.municipal.rbac.procedural.vo.Views.*;
+
+import com.municipal.rbac.procedural.mapper.*;
+import com.municipal.rbac.procedural.po.*;
 import jakarta.servlet.http.HttpSession;
+import java.util.*;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-
-/** 部门树查询过程：读 PO 列表后在内存组装树形 VO。 */
 @Service
 public class DepartmentService {
+  private final DepartmentMapper departments;
+  private final UserMapper users;
+  private final AuthorizationService authorization;
+  private final MeService me;
 
-    private final DepartmentMapper departmentMapper;
-    private final UserMapper userMapper;
-    private final AuthorizationService authorization;
+  public DepartmentService(
+      DepartmentMapper departments,
+      UserMapper users,
+      AuthorizationService authorization,
+      MeService me) {
+    this.departments = departments;
+    this.users = users;
+    this.authorization = authorization;
+    this.me = me;
+  }
 
-    public DepartmentService(DepartmentMapper departmentMapper,
-                             UserMapper userMapper,
-                             AuthorizationService authorization) {
-        this.departmentMapper = departmentMapper;
-        this.userMapper = userMapper;
-        this.authorization = authorization;
-    }
+  public List<Map<String, Object>> tree(HttpSession session) {
+    String scope = authorization.require(session, "rbac:department:read");
+    var actor = authorization.current(session);
+    Set<String> allowed =
+        "DEPT".equals(scope) ? departments.subtree(actor.departmentId()) : Set.of();
+    List<DepartmentPO> visible =
+        departments.findAll().stream()
+            .filter(
+                d ->
+                    "ALL".equals(scope)
+                        || "DEPT".equals(scope) && allowed.contains(d.id())
+                        || "SELF".equals(scope) && Objects.equals(actor.departmentId(), d.id()))
+            .toList();
+    Set<String> ids = new HashSet<>();
+    visible.forEach(d -> ids.add(d.id()));
+    List<UserPO> staff = users.findAll();
+    return visible.stream()
+        .filter(d -> d.parentId() == null || !ids.contains(d.parentId()))
+        .map(d -> node(d, visible, staff))
+        .toList();
+  }
 
-    public List<DepartmentNodeVO> tree(HttpSession session) {
-        authorization.require(session, "rbac:department:read");
-        List<DepartmentPO> rows = departmentMapper.findAll();
-        Map<String, DepartmentPO> byId = new HashMap<>();
-        Map<String, List<DepartmentPO>> byParent = new HashMap<>();
-        for (DepartmentPO row : rows) {
-            byId.put(row.id(), row);
-            byParent.computeIfAbsent(row.parentId(), k -> new ArrayList<>()).add(row);
-        }
-        List<DepartmentNodeVO> roots = new ArrayList<>();
-        for (DepartmentPO row : rows) {
-            if (row.parentId() == null || !byId.containsKey(row.parentId())) {
-                roots.add(build(row, byId, byParent));
-            }
-        }
-        return roots;
-    }
+  private Map<String, Object> node(DepartmentPO d, List<DepartmentPO> visible, List<UserPO> staff) {
+    var subtree = departments.subtree(d.id());
+    return map(
+        "id",
+        d.id(),
+        "name",
+        d.name(),
+        "shortName",
+        d.shortName(),
+        "type",
+        d.type(),
+        "parentId",
+        d.parentId(),
+        "parentName",
+        departments.findById(d.parentId()).map(DepartmentPO::name).orElse(null),
+        "managerUserId",
+        d.managerId(),
+        "managerName",
+        d.managerId() == null ? null : users.findById(d.managerId()).map(UserPO::name).orElse(null),
+        "employeeCount",
+        staff.stream().filter(u -> Objects.equals(u.departmentId(), d.id())).count(),
+        "totalCount",
+        staff.stream().filter(u -> subtree.contains(u.departmentId())).count(),
+        "children",
+        visible.stream()
+            .filter(c -> Objects.equals(c.parentId(), d.id()))
+            .map(c -> node(c, visible, staff))
+            .toList());
+  }
 
-    private DepartmentNodeVO build(DepartmentPO row,
-                                   Map<String, DepartmentPO> byId,
-                                   Map<String, List<DepartmentPO>> byParent) {
-        String parentName = (row.parentId() != null && byId.containsKey(row.parentId()))
-                ? byId.get(row.parentId()).name() : null;
-        String manager = (row.managerId() != null)
-                ? userMapper.findById(row.managerId()).map(u -> u.name()).orElse(null) : null;
-        int employeeCount = (int) departmentMapper.countEmployees(row.id());
-        List<DepartmentNodeVO> children = byParent.getOrDefault(row.id(), List.of()).stream()
-                .map(child -> build(child, byId, byParent))
-                .toList();
-        return new DepartmentNodeVO(row.id(), row.name(), manager, row.branch(),
-                row.parentId(), parentName, employeeCount, children);
-    }
+  public Map<String, Object> members(HttpSession session, String id, int page, int size) {
+    String scope = authorization.require(session, "rbac:department:read");
+    if (!authorization.coversDepartment(authorization.current(session), scope, id)
+        || departments.findById(id).isEmpty()) throw AuthorizationService.outOfScope();
+    UserService.paging(page, size);
+    var ids = departments.subtree(id);
+    return page(
+        users.findAll().stream()
+            .filter(u -> ids.contains(u.departmentId()))
+            .filter(authorization.visible(authorization.current(session), scope))
+            .toList(),
+        page,
+        size,
+        me::userView);
+  }
 }

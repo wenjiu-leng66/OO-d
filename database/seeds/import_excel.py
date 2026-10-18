@@ -610,6 +610,16 @@ def insert(out, table, cols, rows, batch=200):
     out.append("")
 
 
+def platform_department_admin_grants(perms):
+    """平台部门管理员的六条授权；不改变原清单五角色的授权统计。"""
+    scopes = {
+        "sys:f339:read": "DEPT", "sys:f339:create": "DEPT",
+        "sys:f339:edit": "DEPT", "sys:f339:delete": "DEPT",
+        "sys:f340:read": "ALL", "sys:f342:read": "DEPT",
+    }
+    return [(ROLE_DEPT_ADMIN, pid, scopes[code]) for pid, _, _, code in perms if code in scopes]
+
+
 def render_sql(depts, users, systems, modules, functions, perms, grants):
     by_seq = {f["seq"]: f for f in functions}
     out = [
@@ -653,6 +663,9 @@ def render_sql(depts, users, systems, modules, functions, perms, grants):
     out.append("-- 角色-权限 (来自权限清单)")
     insert(out, "sys_role_permission", ["role_id", "permission_id", "data_scope"],
            [(rid, perm_id(by_seq[seq]["id"], aid), scope) for rid, seq, aid, scope in grants])
+    out.append("-- 平台部门管理员授权 (与清单五角色统计分开); 后端仍限制可授出业务角色和目标部门范围")
+    insert(out, "sys_role_permission", ["role_id", "permission_id", "data_scope"],
+           platform_department_admin_grants(perms))
     return "\n".join(out)
 
 
@@ -693,7 +706,8 @@ def run(dept_path, perm_path, emp_path, out_path, initial_password,
     with_mgr = [d for d in depts if d["manager"]]
     stats = {"depts": len(depts), "users": len(users), "systems": len(systems), "modules": len(modules),
              "functions": len(functions), "permissions": len(perms), "grants": len(grants),
-             "dept_grants": sum(g[3] == "DEPT" for g in grants), "new_codes": len(new_codes)}
+             "dept_grants": sum(g[3] == "DEPT" for g in grants), "new_codes": len(new_codes),
+             "platform_grants": len(platform_department_admin_grants(perms))}
     lines = [
         "== 导入核对 ==",
         f"部门表: {len(depts)} 个部门 (根节点 {root['name']}), 其中 {len(with_mgr)} 个填了负责人",
@@ -701,6 +715,7 @@ def run(dept_path, perm_path, emp_path, out_path, initial_password,
         f"权限 {len(perms)} (功能点 x 6 种动作); 角色授权 {len(grants)} 条, "
         f"其中本部门 (DEPT) {sum(g[3] == 'DEPT' for g in grants)} 条、仅本人 (SELF) "
         f"{sum(g[3] == 'SELF' for g in grants)} 条",
+        f"平台部门管理员额外授权 {stats['platform_grants']} 条; 全部角色授权共 {len(grants) + stats['platform_grants']} 条",
         f"功能点编号: 编号表原有 {len(known)} 个, 本次新登记 {len(new_codes)} 个"
         + (f" (已写回 {function_codes_path}, 请提交)" if new_codes else ""),
         (f"员工表: 源数据 {emp_rows} 行 -> 成功 {len(emps)} 行, 失败 {len(failed)} 行" if emp_path

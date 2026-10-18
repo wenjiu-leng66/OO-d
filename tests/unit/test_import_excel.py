@@ -372,6 +372,19 @@ class CodesTest(unittest.TestCase):
         self.assertEqual(perms[2][:3], (45 * 6 + 3, 46, 3))  # 权限 ID 由编号和动作算出
 
 
+class PlatformDepartmentAdminTest(unittest.TestCase):
+    def test_platform_grants_are_scoped_and_do_not_add_grant_management(self):
+        perms = [(i, 339, 1, code) for i, code in enumerate([
+            "sys:f339:read", "sys:f339:create", "sys:f339:edit", "sys:f339:delete",
+            "sys:f340:read", "sys:f342:read", "sys:f341:edit", "hr:f046:edit"], 1)]
+        self.assertEqual(ie.platform_department_admin_grants(perms), [
+            (6, 1, "DEPT"), (6, 2, "DEPT"), (6, 3, "DEPT"), (6, 4, "DEPT"),
+            (6, 5, "ALL"), (6, 6, "DEPT")])
+
+    def test_partial_catalog_does_not_create_unknown_permissions(self):
+        self.assertEqual(ie.platform_department_admin_grants([(1, 1, 1, "oa:f001:read")]), [])
+
+
 class EndToEndTest(unittest.TestCase):
     """合成 Excel -> SQL: 合并单元格向下填充、空行、行号、失败行报告、编号稳定、密码不落地。"""
 

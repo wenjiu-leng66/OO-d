@@ -1,31 +1,37 @@
 package com.municipal.rbac.procedural.controller;
 
-import com.municipal.rbac.procedural.service.MeService;
-import com.municipal.rbac.procedural.vo.MeVO;
-import com.municipal.rbac.procedural.vo.PermissionsVO;
+import com.municipal.rbac.procedural.dto.Requests;
+import com.municipal.rbac.procedural.service.*;
 import jakarta.servlet.http.HttpSession;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import jakarta.validation.Valid;
+import java.util.Map;
+import org.springframework.web.bind.annotation.*;
 
-/** 当前身份与当前有效权限。 */
 @RestController
 @RequestMapping("/api/v1/me")
 public class MeController {
+  private final MeService me;
+  private final AuthService auth;
 
-    private final MeService meService;
+  public MeController(MeService me, AuthService auth) {
+    this.me = me;
+    this.auth = auth;
+  }
 
-    public MeController(MeService meService) {
-        this.meService = meService;
-    }
+  @GetMapping
+  public Map<String, Object> me(HttpSession session) {
+    return me.me(session);
+  }
 
-    @GetMapping
-    public MeVO me(HttpSession session) {
-        return meService.me(session);
-    }
+  @GetMapping("/permissions")
+  public Map<String, Object> permissions(HttpSession session) {
+    return me.permissions(session);
+  }
 
-    @GetMapping("/permissions")
-    public PermissionsVO permissions(HttpSession session) {
-        return meService.permissions(session);
-    }
+  @PatchMapping("/password")
+  public Map<String, Object> password(
+      @Valid @RequestBody Requests.Password body, HttpSession session) {
+    auth.password(session, body);
+    return Map.of("success", true);
+  }
 }

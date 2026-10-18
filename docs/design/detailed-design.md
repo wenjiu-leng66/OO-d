@@ -1,291 +1,75 @@
-# RBAC0 面向功能后端 · 详细设计说明书
+# RBAC0 面向功能后端详细设计
 
-| 项目 | 内容 |
+2026-10-18集成版。在成员4/5原后端基础上补齐一期需求，与成员1正式数据库、成员6 API设计及完整界面原型统一。旧设计保留于[成员4/5设计来源](member4-procedural-rbac0-design.md)，输入提交见[合并记账](../stage1/merge-sources.md)。
+
+## 结构与范式
+
+JDK 21、Spring Boot 3.3.5、Spring JDBC。Controller接收HTTP和校验DTO，Service按功能组织认证/授权/校验/事务流水线，Mapper只负责参数化SQL，Views显式构建不含密码的响应。使用少量PO/DTO不改变面向功能实现的核心：授权逻辑集中为可复用步骤，按场景顺序组合；领域对象继承等留待第二阶段独立后端。
+
+```mermaid
+flowchart LR
+  HTTP[HTTP Cookie请求] --> C[Controller与DTO校验]
+  C --> A[AuthorizationService]
+  A --> S[功能Service]
+  S --> M[Mapper / JdbcTemplate]
+  A --> M
+  M --> DB[(正式V001数据库)]
+  S --> V[Views显式JSON响应]
+```
+
+| 模块 | 职责 |
 | --- | --- |
-| 系统名称 | 模块化政务 RBAC 权限管理系统 |
-| 文档对象 | 面向功能/过程实现的后端（`backend-procedural/`） |
-| 版本 | v0.2.0（与代码、openapi.yaml 同步） |
-| 技术栈 | Java 21、Spring Boot 3.3.5、Spring JDBC (JdbcTemplate)、H2（MODE=MySQL）、HttpSession、BCrypt |
-| 构建/测试 | Maven；JUnit 5 + MockMvc 集成测试；JaCoCo 0.8.12 |
-| 相关文档 | `api/openapi.yaml`（接口契约）、`docs/database/data-dictionary.md`（数据字典）、`backend-procedural/README.md`（运行指南） |
+| `AuthService` | 工号/手机号登录、通用错误、改密、退出 |
+| `AuthorizationService` | 会话有效性、初始改密限制、角色/权限并集、管理码映射、范围与目标检查 |
+| `MeService` | 本人安全字段、有效权限及来源角色 |
+| `UserService` | 范围内查询/增改删、停用/重置、账号保护、用户角色原子替换 |
+| `RoleService` | 角色管理、保护/删除确认、成员查询、角色授权原子替换 |
+| `DepartmentService` | 只读树、负责人关联、员工数与全部下级成员 |
+| `CatalogService` | 目录筛选/分页/全局统计、兼容权限与资源查询 |
+| `PortalService` | 按read权限生成菜单、功能点六动作状态 |
+| `LedgerService` | 按hr:f046范围查询与仅电话/邮箱编辑 |
+| `DataInitializer` | 明确开启时装载合成目录和演示账号；真实Excel走离线导入 |
 
-## 1. 系统概述
+## 会话与密码
 
-本系统的后端采用**面向功能（面向过程）**的方式实现 RBAC0 权限模型：不引入复杂的领域对象模型，而是把系统能力组织为一条条**功能流水线**——「认证 → 加载用户角色 → 计算有效权限 → 检查约束 → 执行业务 → 组装视图」。
+服务端`HttpSession`保存用户ID和当前凭证版本关联，Cookie为`JSESSIONID`。成功登录轮换会话ID，Cookie为HttpOnly、SameSite=Lax，HTTPS启用Secure。每次请求从数据库重新读取账号和授权；账号不存在/停用、凭证已变更等旧会话返回401。退出使会话失效。
 
-### 1.1 需求与目标
+首次登录/被重置后`mustChangePassword=true`，只允许本人信息、改密和退出。旧密码正确、新密码8–128字符且不同于旧密码后清除标记；当前改密会话更新凭证状态，其他旧会话失效。重置密码来自部署环境配置，创建与重置接口不接受前端指定初始密码。
 
-1. 支持用户登录/退出、账号启停（`active`/`inactive`）。
-2. 支持 RBAC0：用户-角色-权限两级分配；有效权限 = 已分配且启用角色的权限码去重并集；支持范围（`all`/`self`）；默认拒绝。
-3. 提供用户管理（查询、创建、停用/启用、删除）、角色管理（查询、权限替换）、权限目录、资源目录、部门树等管理功能。
-4. 全部对外接口遵循 REST 风格：资源来自 ER 图实体、JSON 交互、GET/POST/PUT/DELETE、HTTP 状态码表达结果。
-5. 并发授权变更使用乐观锁版本控制，冲突返回 409。
+新密码与导入统一使用`{pbkdf2@SpringSecurity_v5_8}`前缀的PBKDF2，通过兼容编码器校验已有带前缀哈希。PBKDF2处理完整的8–128字符密码，避免旧BCrypt算法的72字节截断。响应只通过安全字段视图构造，不直接序列化数据库密码字段。
 
-### 1.2 明确不做（本期范围外）
+## 鉴权与范围
 
-RBAC1/2（角色继承、约束）、审批流、移动端、生产级数据库高可用；会话采用内存 HttpSession，不做集群共享。
+每个业务操作按认证→权限码→范围→目标检查。权限只来自已分配且启用的角色，集中由`AuthorizationService`计算；没有明确授予一律拒绝。权限在服务端取得，客户端传来的角色/权限不参与鉴权。
 
-## 2. 总体架构设计
+同一权限码多角色取`ALL>DEPT>SELF`最大范围；不同码独立。DEPT为本人部门及全部下级；SELF为目标用户ID等于本人。`rbac:*`由系统18源清单权限派生，范围不变，[映射表](../standards/api-contract.md)是契约的一部分。角色授权只接受清单码，不直接接受派生码。
 
-### 2.1 分层架构
+用户与台账查询先裁剪范围再筛选/分页。修改目标和迁入部门都检查；范围外与不存在统一403 OUT_OF_SCOPE，不返回对象字段。员工台账只允许phone/email，编辑权限与查看权限分别计算，不能因查看ALL就允许编辑ALL。
 
-```mermaid
-graph TB
-    A[前端 / Swagger UI] --> B[Controller 层]
-    B --> C[Service 层]
-    C --> D[Mapper 层]
-    D --> E[H2 数据库]
-    B -. 请求数据 .-> F[DTO]
-    C -. 响应数据 .-> G[VO]
-    D -. 表行数据 .-> H[PO]
-```
+部门成员接口同时过滤人员范围，SELF只返回本人；用户新增为其他账号，SELF创建范围直接拒绝，不能把“本人部门”误当成“本人”。两种管理边界均应由临时SELF角色回归验证。
 
-- **Controller → Service → Mapper 三层调用**，上层只依赖下一层，禁止跨层访问（Controller 不直接调用 Mapper）。
-- **DTO 接收请求数据**：`dto/` 包（如 `CreateUserRequest`），带 Jakarta Validation 注解，由 `@Valid` 触发校验。
-- **VO 返回响应数据**：`vo/` 包（如 `UserDetailVO`），只含展示所需字段，密码哈希等内部字段永不下发。
-- **PO 对应数据库表**：`po/` 包与表一一对应（7 张表 7 个 PO），Mapper 只返回 PO，不做跨表组装。
-- **横向支撑**：`error/`（统一异常与错误包络）、`config/`（BCrypt Bean）、`data/`（演示数据初始化）。
+超级管理员仅预置admin；部门管理员对其部门子树有用户管理权，仅能增删业务角色，不可增删管理类角色或修改角色授权。角色成员查询还按调用者用户查看范围裁剪，缺少用户查看权时返回空集合。
 
-### 2.2 包结构
+## 事务与版本
 
-```text
-com.municipal.rbac.procedural
-├── ProceduralApplication.java      # 启动类
-├── controller/                     # ① 接收请求、参数绑定、返回 VO
-│   ├── AuthController  MeController  UserController
-│   ├── RoleController  CatalogController  DepartmentController
-├── service/                        # ② 过程编排：鉴权→计算→校验→执行→组装
-│   ├── AuthService  AuthorizationService(集中授权)  MeService
-│   ├── UserService  RoleService  CatalogService  DepartmentService
-│   └── EffectivePermissions        # 有效权限快照（角色集/权限码/范围）
-├── mapper/                         # ③ 只读写表行（JdbcTemplate），返回 PO
-│   ├── UserMapper  RoleMapper  CatalogMapper  DepartmentMapper
-├── dto/                            # 请求对象（5 个）
-│   LoginRequest  CreateUserRequest  UpdateUserStatusRequest
-│   ReplaceRolesRequest  ReplacePermissionsRequest
-├── vo/                             # 响应对象（13 个，含 PageVO 泛型分页）
-├── po/                             # 表映射（7 个）
-├── error/                          # ApiException + GlobalExceptionHandler
-├── config/                         # SecurityConfig（仅 PasswordEncoder Bean）
-└── data/                           # DataInitializer（演示数据，库空时写入）
-```
+用户角色集合使用`sys_user.role_version`；角色直接授权集合使用`sys_role.permission_version`。GET读取版本，PUT提交完整目标集合和version，先做权限/范围/保护/合法性校验，再在事务中比较并递增版本、替换关联。任意一步异常全部回滚；旧版本409 VERSION_CONFLICT含currentVersion，不覆盖并发成功结果。
 
-### 2.3 对象转换链（以“用户详情”为例）
+用户角色替换和角色删除按数字ID升序锁定相关角色行，并在READ_COMMITTED事务中重新读取关系，避免删除确认与并发授角互相穿透，或用旧授权快照判断管理类角色。版本冲突的currentVersion通过锁定当前读获取，避免MySQL可重复读快照返回过期细节；删除角色逐一更新受影响用户版本。
 
-```text
-users 表行 --UserMapper--> UserPO --UserService(+部门字典/角色名/有效权限)--> UserDetailVO --JSON--> 前端
-```
+授权数据是`[{code,scope}]`，拒绝重复/未知码与非法范围。非read动作必须同时有本功能read，前端自动勾，后端READ_REQUIRED兜底。失败注入验证属于后端测试，生产API不暴露“模拟失败”开关。
 
-## 3. 核心机制详细设计
+禁止停用/删除自己、改自己角色，禁止停用/删除唯一admin或改其角色。六个内置角色不可删除，ADMIN不可停用/改授权。有成员的自建角色删除需要confirm=true；删除清理关联并更新受影响用户角色版本。用户删除通过外键清理角色关联并将部门负责人置空。
 
-### 3.1 认证与会话
+## 数据与运行
 
-- 登录账号 = 员工号或手机号（`UserMapper.findByAccount`：`employee_no = ? OR phone = ?`）。
-- 密码校验：BCrypt（`spring-security-crypto`，不引入 Spring Security 自动配置）。
-- 状态校验：仅 `status = 'active'` 可登录，否则 403 `ACCOUNT_DISABLED`。
-- 会话：登录成功后 `session.setAttribute("userId", id)`；后续请求由 `AuthorizationService.requireUserId` 取会话身份，缺失抛 401 `UNAUTHENTICATED`。
-- 退出：`session.invalidate()`。
+以[正式V001迁移](../../database/migrations/V001__create_core_tables.sql)和[数据字典](../database/data-dictionary.md)为权威。H2仅作为独立测试环境；服务器使用MySQL8.4和持久卷。目录/部门只读，三份原始Excel由离线脚本生成SQL，不提供网页上传。
 
-登录时序：
+原清单有3549条五角色授权；平台部门管理员另加六条，完整导入时总数3555。合成演示只验证规则与接口，不能证明111组织和10000员工的原始数据导入已验收。数据初始化不应覆盖已有真实数据。
 
-```mermaid
-sequenceDiagram
-    participant C as AuthController
-    participant S as AuthService
-    participant M as UserMapper
-    participant A as AuthorizationService
-    C->>S: login(LoginRequest, HttpSession)
-    S->>M: findByAccount(账号)
-    M-->>S: UserPO / 空
-    S->>S: BCrypt 校验密码、status 校验
-    S->>S: session.setAttribute(userId)
-    S->>A: effectivePermissions(userId)
-    A-->>S: 权限码并集 + 范围
-    S-->>C: LoginVO(身份 + permissionCodes)
-```
+部署由Nginx提供完整Vue原型、真实后端检查入口及静态API设计，并代理/api到Java。原型内存模拟数据与真实Cookie/MySQL相互独立；本次一期允许分别验收。Java/MySQL端口不发布公网，环境文件不提交Git。
 
-### 3.2 RBAC0 授权模型与有效权限计算
+## 测试与限制
 
-有效权限（`AuthorizationService.effectivePermissions`）：
+接口字段与状态码见[OpenAPI](../../api/openapi.yaml)。后端集成测试覆盖会话、首次改密、保护、范围、原子授权与409；真实HTTP脚本验证Cookie及运行实例；MySQL迁移、全量导入、持久化和性能分别记录，不能用H2通过替代。
 
-1. 查 `user_roles ⋈ roles`，取**已分配且启用**（`enabled = TRUE`）的角色 ID 列表；
-2. 遍历每个角色的 `role_permissions`，权限码进入 `LinkedHashSet`（自动去重、保序）；
-3. 范围合并 `scopes.merge(code, scope, mergeScope)`：任一路径为 `all` 则结果 `all`，否则 `self`；
-4. 输出 `EffectivePermissions(roleIds, permissionCodes, scopes)`。
-
-校验规则（默认拒绝）：`require(session, 权限码)` 未命中即 403 `FORBIDDEN`；`requireSelf(session, ownerId)` 用于本人范围资源。
-
-授权检查时序（所有受保护接口共用）：
-
-```mermaid
-sequenceDiagram
-    participant C as Controller
-    participant S as Service
-    participant A as AuthorizationService
-    C->>S: 业务方法(session, 参数)
-    S->>A: require(session, "rbac:user:read")
-    A->>A: requireUserId → effectivePermissions → contains(权限码)
-    A-->>S: 通过 / 抛出 401、403
-    S->>S: 执行业务并组装 VO
-    S-->>C: VO
-```
-
-### 3.3 乐观锁（并发授权安全）
-
-| 场景 | 版本字段 | 流程 |
-| --- | --- | --- |
-| 替换用户角色 `PUT /users/{id}/roles` | `users.role_version` | 读取当前版本 → 请求版本不符则 409；相符则删旧插新并 `version+1` |
-| 替换角色权限 `PUT /roles/{id}/permissions` | `roles.permission_version` | 同上 |
-
-冲突响应 `409 VERSION_CONFLICT`，`details` 携带 `expectedVersion` / `currentVersion`，前端重新读取后复核提交。
-
-### 3.4 统一错误处理
-
-- 业务异常 `ApiException(HttpStatus, code, message, details)`，由 `GlobalExceptionHandler` 统一转成：
-
-```json
-{ "error": { "code": "FORBIDDEN", "message": "没有执行该操作的权限。", "requestId": "4f2a9c1b7d3e", "details": null } }
-```
-
-- 参数校验失败（`MethodArgumentNotValidException`）→ 400 `INVALID_ARGUMENT`；请求体不可解析 → 400 `INVALID_ARGUMENT`；未知异常 → 500 `INTERNAL_ERROR`（记录日志）。
-
-错误码总表（与 openapi.yaml 一致）：
-
-| HTTP | 错误码 | 含义 |
-| --- | --- | --- |
-| 400 | INVALID_ARGUMENT | 参数非法（含状态/账号类型枚举校验） |
-| 400 | DUPLICATE_ITEM | 员工号/手机号/集合元素重复 |
-| 400 | UNKNOWN_ROLE | 角色不存在（分配时） |
-| 400 | UNKNOWN_PERMISSION | 权限码不存在（授权时） |
-| 400 | UNKNOWN_DEPARTMENT | 部门不存在（创建用户时） |
-| 401 | INVALID_CREDENTIALS | 账号或密码错误 |
-| 401 | UNAUTHENTICATED | 未登录或会话失效 |
-| 403 | ACCOUNT_DISABLED | 账号已停用 |
-| 403 | FORBIDDEN | 缺少所需权限码（默认拒绝） |
-| 403 | PROTECTED_ACCOUNT | 受保护账号（本人/超级管理员）不可改状态或删除 |
-| 403 | PROTECTED_ROLE | 不允许分配超级管理员角色 |
-| 404 | USER_NOT_FOUND / ROLE_NOT_FOUND / RESOURCE_NOT_FOUND | 资源不存在 |
-| 409 | VERSION_CONFLICT | 乐观锁版本冲突 |
-| 500 | INTERNAL_ERROR | 未预期错误 |
-
-## 4. 功能模块详细设计
-
-### 4.1 认证模块（AuthService / AuthController）
-
-- `POST /api/v1/auth/login`：登录，返回 `LoginVO`（身份摘要 + 权限码）；
-- `POST /api/v1/auth/logout`：退出，返回 `{ "success": true }`。
-
-### 4.2 当前身份模块（MeService）
-
-- `GET /api/v1/me`：`MeVO`；`GET /api/v1/me/permissions`：`PermissionsVO`（roleIds、permissionCodes、scopes、version）。
-
-### 4.3 用户管理模块（UserService）
-
-| 功能 | 规则要点 |
-| --- | --- |
-| 分页查询 `GET /users` | 需 `rbac:user:read`；支持 keyword（姓名/员工号/岗位）、departmentId、accountType；pageSize 上限 100 |
-| 详情 `GET /users/{id}` | 组装部门名/分公司（部门字典）、启用角色名、有效权限码 |
-| 创建 `POST /users` | 需 `rbac:user:create`；accountType ∈ {employee, temporary-ops}；部门必须存在；员工号/手机号唯一；roleIds 不允许含 super-admin；ID 规则 `u-` + UUID 前 12 位；初始 `status=active`、`role_version=1`；返回 201 |
-| 状态变更 `PUT /users/{id}/status` | 需 `rbac:user:update`；status ∈ {active, inactive}；本人账号、超级管理员账号受保护（403 PROTECTED_ACCOUNT） |
-| 删除 `DELETE /users/{id}` | 需 `rbac:user:delete`；事务内先删 `user_roles` 再删 `users`；本人、超级管理员受保护；返回 204 |
-| 角色集合查询 `GET /users/{id}/roles` | 需 `rbac:user:read`；返回完整角色 ID 集合 + 版本 |
-| 角色替换 `PUT /users/{id}/roles` | 需 `rbac:user:assign-role`；完整集合语义；重复 400、未知角色 400、版本冲突 409 |
-
-创建用户流程：
-
-```mermaid
-sequenceDiagram
-    participant C as UserController
-    participant S as UserService
-    participant A as AuthorizationService
-    participant M as UserMapper
-    C->>S: create(session, CreateUserRequest)
-    S->>A: require(rbac:user:create)
-    S->>S: 校验 accountType / 部门存在 / 员工号与手机号唯一 / 角色合法且非 super-admin
-    S->>M: insert(UserPO, BCrypt 密码哈希)
-    S->>M: insertUserRole(逐条)
-    S-->>C: UserDetailVO（201 Created）
-```
-
-### 4.4 角色模块（RoleService）
-
-- `GET /roles`：需 `rbac:role:read`；列表含角色码、权限码与版本；
-- `GET /roles/{id}/permissions`：需 `rbac:role:read`；
-- `PUT /roles/{id}/permissions`：需 `rbac:role:grant`；重复 400、未知权限码 400、版本冲突 409；替换后权限的 scope 统一为 `all`。
-
-### 4.5 目录与组织模块
-
-- `GET /permissions`：需 `rbac:permission:read`；`scope_options` 字符串在 Service 拆分为列表；
-- `GET /resources`：需 `rbac:permission:read`；按 `parentId` 逐层展开，`hasChildren` 由 Mapper 查询填充；
-- `GET /departments`：需 `rbac:department:read`；读平表后在内存组装树（含 parentName、manager 姓名、employeeCount）。
-
-## 5. 接口设计（REST）
-
-设计原则：资源来自 ER 图实体（users / roles / permissions / resources / departments）；JSON 交互；以 GET/POST/PUT/DELETE 表达操作；HTTP 状态码表达结果。
-
-| # | 方法 | 路径 | 功能 | 所需权限码 | 成功码 |
-| --- | --- | --- | --- | --- | --- |
-| 1 | POST | /api/v1/auth/login | 登录 | 公开 | 200 |
-| 2 | POST | /api/v1/auth/logout | 退出 | 公开 | 200 |
-| 3 | GET | /api/v1/me | 当前身份 | 登录即可 | 200 |
-| 4 | GET | /api/v1/me/permissions | 有效权限 | 登录即可 | 200 |
-| 5 | GET | /api/v1/users | 用户分页 | rbac:user:read | 200 |
-| 6 | POST | /api/v1/users | 创建用户 | rbac:user:create | **201** |
-| 7 | GET | /api/v1/users/{id} | 用户详情 | rbac:user:read | 200 |
-| 8 | PUT | /api/v1/users/{id}/status | 启停账号 | rbac:user:update | 200 |
-| 9 | DELETE | /api/v1/users/{id} | 删除用户 | rbac:user:delete | **204** |
-| 10 | GET | /api/v1/users/{id}/roles | 用户角色集合 | rbac:user:read | 200 |
-| 11 | PUT | /api/v1/users/{id}/roles | 替换角色（乐观锁） | rbac:user:assign-role | 200 |
-| 12 | GET | /api/v1/roles | 角色分页 | rbac:role:read | 200 |
-| 13 | GET | /api/v1/roles/{id}/permissions | 角色权限集合 | rbac:role:read | 200 |
-| 14 | PUT | /api/v1/roles/{id}/permissions | 替换权限（乐观锁） | rbac:role:grant | 200 |
-| 15 | GET | /api/v1/permissions | 权限目录分页 | rbac:permission:read | 200 |
-| 16 | GET | /api/v1/resources | 资源目录分页 | rbac:permission:read | 200 |
-| 17 | GET | /api/v1/departments | 部门树 | rbac:department:read | 200 |
-
-完整请求/响应 Schema 见 `api/openapi.yaml`；在线调试：启动后访问 `http://localhost:8080/swagger-ui.html`。
-
-## 6. 数据库设计
-
-7 张表：`departments`、`users`、`roles`、`permissions`、`resources`、`user_roles`、`role_permissions`。ER 图与逐字段字典见 `docs/database/data-dictionary.md`；建表脚本 `backend-procedural/src/main/resources/schema.sql`。
-
-## 7. 测试设计（JaCoCo）
-
-- 框架：JUnit 5 + `@SpringBootTest` + MockMvc 全链路集成测试（真实 H2 + 演示数据），会话通过登录助手获取；写库用例加 `@Transactional` 自动回滚，互不污染。
-- 测试类与关注点：
-
-| 测试类 | 用例数 | 覆盖点 |
-| --- | --- | --- |
-| AuthApiTest | 8 | 登录成功/手机号/错误密码/停用账号/参数校验、/me、退出 |
-| AccessControlApiTest | 7 | 未登录 401、无权限 403、有效权限计算、404 |
-| UserManagementApiTest | 19 | 分页与过滤、详情、角色替换（成功/冲突/重复/未知）、创建（成功/重复/未知部门/未知角色/super-admin 保护）、状态变更、删除与保护 |
-| RolePermissionApiTest | 13 | 角色列表/过滤、角色权限替换（成功/冲突/未知码）、权限目录、资源目录、部门树 |
-
-- JaCoCo 报告：`mvn test` 自动生成于 `backend-procedural/target/site/jacoco/index.html`（HTML）与 `jacoco.xml`（机器可读）。
-- 当前结果：**47 个用例全部通过；指令覆盖率 95%（4,265 / 4,472），行覆盖 95%（653 / 689），类覆盖 51/51；Controller、VO、PO、DTO 包 100%。**
-
-## 8. 与课程验收要求对照
-
-| 验收要求 | 实现情况 |
-| --- | --- |
-| 用面向功能的方式实现 RBAC0 后端 | 全流程过程式 Service（认证→授权→执行），见第 3、4 节 |
-| 三层：Controller → Service → Mapper | `controller/`、`service/`、`mapper/` 严格单向调用，Controller 无 Mapper 依赖 |
-| DTO 接收数据、VO 返回数据、PO 对应数据库表 | `dto/` 5 个、`vo/` 13 个、`po/` 7 个（与 7 张表一一对应） |
-| API 按 REST：资源来自 ER 实体、JSON、GET/POST/PUT/DELETE | 17 个操作见第 5 节，`openapi.yaml` 完整契约 |
-| 状态码用 HTTP 状态码 | 200/201/204/400/401/403/404/409/500 + 统一错误包络，见 3.4 |
-| API 设计文档 | `api/openapi.yaml` + 运行时 Swagger UI |
-| 数据库设计 | `docs/database/data-dictionary.md`（ER 图 + 7 表字段字典） |
-| 详细设计 | 本文档 |
-| JaCoCo 测试报告（或代码） | 测试代码 `src/test/java/.../*.java`；报告 `target/site/jacoco/`；覆盖率 95%（指令） |
-
-## 9. 运行与演示（给评审）
-
-```powershell
-# 在仓库根目录（Windows PowerShell；本机 JDK 21 位于 D:\jdk21）
-& 'D:\IDEA\IntelliJ IDEA 2025.2.3\plugins\maven\lib\maven3\bin\mvn.cmd' -f backend-procedural/pom.xml clean test
-& 'D:\IDEA\IntelliJ IDEA 2025.2.3\plugins\maven\lib\maven3\bin\mvn.cmd' -f backend-procedural/pom.xml spring-boot:run
-```
-
-1. 浏览器访问 `http://localhost:8080/swagger-ui.html`，用 E001 / 123456 登录后调试全部接口；
-2. H2 控制台 `http://localhost:8080/h2-console`（JDBC URL：`jdbc:h2:mem:rbac`，用户 sa，空密码）查看 7 张表数据；
-3. 无领导小组面试建议演示路径：错误密码 401 → E004 查用户 403（默认拒绝）→ E001 创建用户 201 → 停用 200 → 用户登录被 403 → 删除 204 → 替换角色 409 版本冲突 → JaCoCo 报告。
+实际命令、证据与待执行项见[验证记录](../stage1/verification-record.md)和[自测步骤](../stage1/self-test.md)。角色继承、SSD/DSD/基数、激活角色切换、审计日志、双后端等价属于后续阶段。按用户最新要求，本轮不连接或操作服务器；部署材料已准备，留待用户自行部署验证，不声称已经上线。

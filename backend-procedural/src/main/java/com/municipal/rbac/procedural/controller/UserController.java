@@ -1,81 +1,79 @@
 package com.municipal.rbac.procedural.controller;
 
-import com.municipal.rbac.procedural.dto.CreateUserRequest;
-import com.municipal.rbac.procedural.dto.ReplaceRolesRequest;
-import com.municipal.rbac.procedural.dto.UpdateUserStatusRequest;
+import com.municipal.rbac.procedural.dto.Requests;
 import com.municipal.rbac.procedural.service.UserService;
-import com.municipal.rbac.procedural.vo.PageVO;
-import com.municipal.rbac.procedural.vo.UserDetailVO;
-import com.municipal.rbac.procedural.vo.UserRolesVO;
-import com.municipal.rbac.procedural.vo.UserVO;
 import jakarta.servlet.http.HttpSession;
 import jakarta.validation.Valid;
+import java.util.Map;
 import org.springframework.http.HttpStatus;
-import org.springframework.web.bind.annotation.DeleteMapping;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.PutMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.ResponseStatus;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
-/** 用户管理：查询、创建、状态变更、删除与用户角色替换。 */
 @RestController
 @RequestMapping("/api/v1/users")
 public class UserController {
+  private final UserService users;
 
-    private final UserService userService;
+  public UserController(UserService users) {
+    this.users = users;
+  }
 
-    public UserController(UserService userService) {
-        this.userService = userService;
-    }
+  @GetMapping
+  public Map<String, Object> list(
+      @RequestParam(required = false) String keyword,
+      @RequestParam(required = false) String departmentId,
+      @RequestParam(required = false) String roleId,
+      @RequestParam(required = false) String username,
+      @RequestParam(required = false) String name,
+      @RequestParam(defaultValue = "1") int page,
+      @RequestParam(defaultValue = "20") int pageSize,
+      HttpSession session) {
+    return users.list(session, keyword, departmentId, roleId, username, name, page, pageSize);
+  }
 
-    @GetMapping
-    public PageVO<UserVO> list(@RequestParam(required = false) String keyword,
-                               @RequestParam(required = false) String departmentId,
-                               @RequestParam(required = false) String accountType,
-                               @RequestParam(defaultValue = "1") int page,
-                               @RequestParam(defaultValue = "20") int pageSize,
-                               HttpSession session) {
-        return userService.list(session, keyword, departmentId, accountType, page, pageSize);
-    }
+  @GetMapping("/{id}")
+  public Map<String, Object> detail(@PathVariable String id, HttpSession session) {
+    return users.detail(session, id);
+  }
 
-    @GetMapping("/{id}")
-    public UserDetailVO detail(@PathVariable String id, HttpSession session) {
-        return userService.detail(session, id);
-    }
+  @PostMapping
+  @ResponseStatus(HttpStatus.CREATED)
+  public Map<String, Object> create(
+      @Valid @RequestBody Requests.CreateUser body, HttpSession session) {
+    return users.create(session, body);
+  }
 
-    @PostMapping
-    @ResponseStatus(HttpStatus.CREATED)
-    public UserDetailVO create(@Valid @RequestBody CreateUserRequest request, HttpSession session) {
-        return userService.create(session, request);
-    }
+  @PutMapping("/{id}")
+  public Map<String, Object> update(
+      @PathVariable String id, @Valid @RequestBody Requests.UpdateUser body, HttpSession session) {
+    return users.update(session, id, body);
+  }
 
-    @PutMapping("/{id}/status")
-    public UserVO updateStatus(@PathVariable String id,
-                               @Valid @RequestBody UpdateUserStatusRequest request,
-                               HttpSession session) {
-        return userService.updateStatus(session, id, request);
-    }
+  @PatchMapping("/{id}/status")
+  public Map<String, Object> status(
+      @PathVariable String id, @Valid @RequestBody Requests.Status body, HttpSession session) {
+    return users.status(session, id, body);
+  }
 
-    @DeleteMapping("/{id}")
-    @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void delete(@PathVariable String id, HttpSession session) {
-        userService.delete(session, id);
-    }
+  @DeleteMapping("/{id}")
+  @ResponseStatus(HttpStatus.NO_CONTENT)
+  public void delete(@PathVariable String id, HttpSession session) {
+    users.delete(session, id);
+  }
 
-    @GetMapping("/{id}/roles")
-    public UserRolesVO roles(@PathVariable String id, HttpSession session) {
-        return userService.userRoles(session, id);
-    }
+  @PostMapping("/{id}/password-reset")
+  public Map<String, Object> reset(@PathVariable String id, HttpSession session) {
+    users.reset(session, id);
+    return Map.of("success", true);
+  }
 
-    @PutMapping("/{id}/roles")
-    public UserRolesVO replaceRoles(@PathVariable String id,
-                                    @Valid @RequestBody ReplaceRolesRequest request,
-                                    HttpSession session) {
-        return userService.replaceRoles(session, id, request);
-    }
+  @GetMapping("/{id}/roles")
+  public Map<String, Object> roles(@PathVariable String id, HttpSession session) {
+    return users.userRoles(session, id);
+  }
+
+  @PutMapping("/{id}/roles")
+  public Map<String, Object> replaceRoles(
+      @PathVariable String id, @Valid @RequestBody Requests.Roles body, HttpSession session) {
+    return users.replaceRoles(session, id, body);
+  }
 }

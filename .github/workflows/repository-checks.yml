@@ -25,11 +25,103 @@ jobs:
           persist-credentials: false
       - name: Check repository framework and local documentation links
         run: python3 scripts/check_repository.py
-      - name: Set up Node.js for frontend permission tests
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate the complete API design
+        run: |
+          python3 -m pip install -r scripts/requirements-validation.txt
+          python3 scripts/check_openapi.py
+      - name: Test synthetic Excel/CSV import
+        run: python3 -m unittest discover -s tests/unit -p 'test_*.py' -v
+      - name: Check whitespace in the commit
+        run: git show --format= --check HEAD
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Test RBAC0 frontend permission decisions
-        run: node --test tests/frontend/rbac0-policy.test.cjs
-      - name: Check whitespace in the commit
-        run: git show --format= --check HEAD
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Test all frontend permission, scope, mock API, and router behavior
+        run: node --test tests/frontend/*.test.cjs
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Build the complete interface prototype
+        working-directory: frontend
+        run: npm run build
+
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Test backend behavior and produce coverage report
+        working-directory: backend-procedural
+        run: mvn -B -ntp verify
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backend-test-reports
+          path: |
+            backend-procedural/target/surefire-reports/
+            backend-procedural/target/site/jacoco/
+
+  deployment-smoke:
+    name: MySQL Docker HTTP acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      HTTP_PORT: '18080'
+      MYSQL_PASSWORD: ci-db-${{ github.run_id }}
+      MYSQL_ROOT_PASSWORD: ci-root-${{ github.run_id }}
+      RBAC_DEMO_ENABLED: 'true'
+      RBAC_INITIAL_PASSWORD: ci-demo-${{ github.run_id }}-stage1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build and start isolated acceptance stack
+        run: docker compose -f deploy/compose.yaml up -d --build --wait --wait-timeout 300
+      - name: Check real HTTP Cookie authorization and all public entries
+        run: python3 scripts/smoke_http.py --base-url http://127.0.0.1:18080 --check-web
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compare API design with the live backend
+        run: |
+          python3 -m pip install -r scripts/requirements-validation.txt
+          python3 scripts/check_openapi.py --base-url http://127.0.0.1:18080
+      - name: Recreate backend without restarting Nginx
+        run: docker compose -f deploy/compose.yaml up -d --no-deps --force-recreate --wait --wait-timeout 300 backend
+      - name: Verify Nginx resolves the recreated backend and still serves all entries
+        run: python3 scripts/smoke_http.py --base-url http://127.0.0.1:18080 --wait-ready 30 --check-web
+      - name: Create persistence marker
+        run: python3 scripts/smoke_http.py --base-url http://127.0.0.1:18080 --mode persistence-create
+      - name: Recreate application containers while keeping the MySQL volume
+        run: |
+          docker compose -f deploy/compose.yaml down
+          docker compose -f deploy/compose.yaml up -d --wait --wait-timeout 300
+      - name: Verify MySQL persistence and remove marker
+        run: |
+          python3 scripts/smoke_http.py --base-url http://127.0.0.1:18080 --wait-ready 30 --mode persistence-verify
+          python3 scripts/smoke_http.py --base-url http://127.0.0.1:18080 --mode persistence-cleanup
+      - name: Show diagnostic logs on failure
+        if: failure()
+        run: docker compose -f deploy/compose.yaml logs --no-color --tail=100
+      - name: Remove only the ephemeral CI stack and its test volume
+        if: always()
+        run: docker compose -f deploy/compose.yaml down --volumes

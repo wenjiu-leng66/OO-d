@@ -1,242 +1,237 @@
 package com.municipal.rbac.procedural.service;
 
-import com.municipal.rbac.procedural.dto.CreateUserRequest;
-import com.municipal.rbac.procedural.dto.ReplaceRolesRequest;
-import com.municipal.rbac.procedural.dto.UpdateUserStatusRequest;
+import static com.municipal.rbac.procedural.vo.Views.*;
+
+import com.municipal.rbac.procedural.dto.Requests;
 import com.municipal.rbac.procedural.error.ApiException;
-import com.municipal.rbac.procedural.mapper.DepartmentMapper;
-import com.municipal.rbac.procedural.mapper.RoleMapper;
-import com.municipal.rbac.procedural.mapper.UserMapper;
-import com.municipal.rbac.procedural.po.DepartmentPO;
-import com.municipal.rbac.procedural.po.RolePO;
-import com.municipal.rbac.procedural.po.UserPO;
-import com.municipal.rbac.procedural.po.UserRolePO;
-import com.municipal.rbac.procedural.vo.PageVO;
-import com.municipal.rbac.procedural.vo.UserDetailVO;
-import com.municipal.rbac.procedural.vo.UserRolesVO;
-import com.municipal.rbac.procedural.vo.UserVO;
+import com.municipal.rbac.procedural.mapper.*;
+import com.municipal.rbac.procedural.po.*;
 import jakarta.servlet.http.HttpSession;
+import java.util.*;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.UUID;
-import java.util.function.Function;
-import java.util.stream.Collectors;
-
-/**
- * 用户管理过程：分页查询、详情、创建、状态变更、删除与用户角色替换。
- * Service 负责把 PO + 部门字典组装为 VO，Mapper 保持只读表行。
- */
 @Service
 public class UserService {
+  private final UserMapper users;
+  private final RoleMapper roles;
+  private final DepartmentMapper departments;
+  private final AuthorizationService authorization;
+  private final MeService me;
+  private final PasswordEncoder passwords;
+  private final String initialPassword;
 
-    private static final int MAX_PAGE_SIZE = 100;
-    private static final Set<String> ACCOUNT_TYPES = Set.of("employee", "temporary-ops");
-    private static final Set<String> STATUS_VALUES = Set.of("active", "inactive");
-    private static final String SUPER_ADMIN_CODE = "super-admin";
+  public UserService(
+      UserMapper users,
+      RoleMapper roles,
+      DepartmentMapper departments,
+      AuthorizationService authorization,
+      MeService me,
+      PasswordEncoder passwords,
+      @Value("${rbac.initial-password:}") String initialPassword) {
+    this.users = users;
+    this.roles = roles;
+    this.departments = departments;
+    this.authorization = authorization;
+    this.me = me;
+    this.passwords = passwords;
+    this.initialPassword = initialPassword;
+  }
 
-    private final UserMapper userMapper;
-    private final RoleMapper roleMapper;
-    private final DepartmentMapper departmentMapper;
-    private final PasswordEncoder passwordEncoder;
-    private final AuthorizationService authorization;
+  public static void paging(int page, int size) {
+    if (page < 1 || page > 1000000 || size < 1 || size > 100)
+      throw ApiException.badRequest("VALIDATION", "page须为1至1000000，pageSize须为1至100。");
+  }
 
-    public UserService(UserMapper userMapper,
-                       RoleMapper roleMapper,
-                       DepartmentMapper departmentMapper,
-                       PasswordEncoder passwordEncoder,
-                       AuthorizationService authorization) {
-        this.userMapper = userMapper;
-        this.roleMapper = roleMapper;
-        this.departmentMapper = departmentMapper;
-        this.passwordEncoder = passwordEncoder;
-        this.authorization = authorization;
+  public Map<String, Object> list(
+      HttpSession session,
+      String keyword,
+      String departmentId,
+      String roleId,
+      String username,
+      String name,
+      int page,
+      int size) {
+    String scope = authorization.require(session, "rbac:user:read");
+    var actor = authorization.current(session);
+    paging(page, size);
+    var subtree = departmentId == null ? null : departments.subtree(departmentId);
+    Set<String> roleUsers = roleId == null ? null : new HashSet<>(roles.userIds(roleId));
+    List<UserPO> result =
+        users.findAll().stream()
+            .filter(authorization.visible(actor, scope))
+            .filter(u -> subtree == null || subtree.contains(u.departmentId()))
+            .filter(u -> roleUsers == null || roleUsers.contains(u.id()))
+            .filter(u -> contains(u.username(), username) && contains(u.name(), name))
+            .filter(
+                u ->
+                    keyword == null
+                        || contains(u.username(), keyword)
+                        || contains(u.name(), keyword)
+                        || contains(u.position(), keyword))
+            .toList();
+    return page(result, page, size, me::userView);
+  }
+
+  public static boolean contains(String text, String term) {
+    return term == null
+        || term.isBlank()
+        || text != null && text.toLowerCase(Locale.ROOT).contains(term.toLowerCase(Locale.ROOT));
+  }
+
+  public Map<String, Object> detail(HttpSession session, String id) {
+    return me.userView(authorization.target(session, "rbac:user:read", id));
+  }
+
+  private void department(HttpSession session, String code, String id) {
+    String scope = authorization.require(session, code);
+    var actor = authorization.current(session);
+    if (id == null
+        || departments.findById(id).isEmpty()
+        || !authorization.coversDepartment(actor, scope, id))
+      throw AuthorizationService.outOfScope();
+  }
+
+  private void unique(String username, String phone, String except) {
+    if (username != null && users.usernameExists(username))
+      throw ApiException.conflict("DUPLICATE_USERNAME", "工号已存在。", null);
+    if (users.phoneExists(phone, except))
+      throw ApiException.conflict("DUPLICATE_PHONE", "手机号已存在。", null);
+  }
+
+  private String initialHash() {
+    if (initialPassword.length() < 8)
+      throw ApiException.conflict(
+          "INITIAL_PASSWORD_NOT_CONFIGURED", "请由部署人员设置RBAC_INITIAL_PASSWORD（至少8位）。", null);
+    return passwords.encode(initialPassword);
+  }
+
+  @Transactional
+  public Map<String, Object> create(HttpSession session, Requests.CreateUser r) {
+    if ("SELF".equals(authorization.require(session, "rbac:user:create")))
+      throw AuthorizationService.outOfScope();
+    department(session, "rbac:user:create", r.departmentId());
+    String phone = normalize(r.phone());
+    unique(r.username(), phone, null);
+    String id =
+        users.insert(
+            r.username(),
+            r.name(),
+            r.departmentId(),
+            normalize(r.position()),
+            phone,
+            normalize(r.email()),
+            initialHash());
+    return me.userView(users.findById(id).orElseThrow());
+  }
+
+  @Transactional
+  public Map<String, Object> update(HttpSession session, String id, Requests.UpdateUser r) {
+    authorization.target(session, "rbac:user:update", id);
+    department(session, "rbac:user:update", r.departmentId());
+    unique(null, normalize(r.phone()), id);
+    users.update(
+        id,
+        r.name(),
+        r.departmentId(),
+        normalize(r.position()),
+        normalize(r.phone()),
+        normalize(r.email()));
+    return me.userView(users.findById(id).orElseThrow());
+  }
+
+  private void protectedAccount(HttpSession session, UserPO target) {
+    if (authorization.current(session).id().equals(target.id())
+        || "admin".equals(target.username())
+        || users.hasRoleCode(target.id(), "ADMIN"))
+      throw ApiException.conflict("PROTECTED_ACCOUNT", "不能停用、删除自己或修改自己角色；超级管理员账号受到保护。", null);
+  }
+
+  @Transactional
+  public Map<String, Object> status(HttpSession session, String id, Requests.Status r) {
+    var target = authorization.target(session, "rbac:user:update", id);
+    if ("DISABLED".equals(r.status())) protectedAccount(session, target);
+    users.status(id, "ENABLED".equals(r.status()));
+    return me.userView(users.findById(id).orElseThrow());
+  }
+
+  @Transactional
+  public void delete(HttpSession session, String id) {
+    var target = authorization.target(session, "rbac:user:delete", id);
+    protectedAccount(session, target);
+    users.delete(id);
+  }
+
+  @Transactional
+  public void reset(HttpSession session, String id) {
+    var target = authorization.target(session, "rbac:user:update", id);
+    if (!authorization.superAdmin(authorization.current(session))
+        && (users.hasRoleCode(target.id(), "ADMIN")
+            || users.hasRoleCode(target.id(), "DEPT_ADMIN")))
+      throw ApiException.forbidden("不能重置管理类账号密码。");
+    users.password(id, initialHash(), true);
+  }
+
+  public Map<String, Object> userRoles(HttpSession session, String id) {
+    authorization.target(session, "rbac:user:read", id);
+    var user = users.findById(id).orElseThrow();
+    return assignment(user);
+  }
+
+  private Map<String, Object> assignment(UserPO user) {
+    return map(
+        "userId",
+        user.id(),
+        "roleIds",
+        users.roleIds(user.id(), false),
+        "version",
+        user.roleVersion());
+  }
+
+  @Transactional(isolation = Isolation.READ_COMMITTED)
+  public Map<String, Object> replaceRoles(HttpSession session, String id, Requests.Roles r) {
+    var target = authorization.target(session, "rbac:user:assign-role", id);
+    protectedAccount(session, target);
+    if (new HashSet<>(r.roleIds()).size() != r.roleIds().size())
+      throw ApiException.badRequest("VALIDATION", "roleIds含重复元素。");
+    List<String> before = users.roleIds(id, false);
+    // The common lock order is role IDs ascending, followed by the target user CAS.
+    Set<String> lockIds = new TreeSet<>(Comparator.comparingLong(Long::parseLong));
+    lockIds.addAll(before);
+    lockIds.addAll(r.roleIds());
+    for (String roleId : lockIds)
+      roles
+          .lockById(roleId)
+          .orElseThrow(() -> ApiException.badRequest("VALIDATION", "Unknown role."));
+    Set<String> changed = new HashSet<>(before);
+    for (String roleId : r.roleIds()) if (!changed.add(roleId)) changed.remove(roleId);
+    boolean superAdmin = authorization.superAdmin(authorization.current(session));
+    for (String roleId : r.roleIds()) {
+      var role =
+          roles.findById(roleId).orElseThrow(() -> ApiException.badRequest("VALIDATION", "未知角色。"));
+      if ("ADMIN".equals(role.code())) throw ApiException.forbidden("不能将超级管理员角色授予其他账号。");
     }
-
-    public PageVO<UserVO> list(HttpSession session, String keyword, String departmentId,
-                               String accountType, int page, int pageSize) {
-        authorization.require(session, "rbac:user:read");
-        int size = clamp(pageSize);
-        int offset = (Math.max(page, 1) - 1) * size;
-        Map<String, DepartmentPO> departments = departmentDict();
-        List<UserVO> items = userMapper.findPage(keyword, departmentId, accountType, offset, size)
-                .stream().map(user -> toUserVO(user, departments)).toList();
-        long total = userMapper.count(keyword, departmentId, accountType);
-        return new PageVO<>(items, Math.max(page, 1), size, total);
+    if (!superAdmin)
+      for (String roleId : changed) {
+        var role =
+            roles
+                .findById(roleId)
+                .orElseThrow(() -> ApiException.badRequest("VALIDATION", "未知角色。"));
+        if (authorization.adminRole(role)) throw ApiException.forbidden("只能分配或撤销业务角色。");
+      }
+    if (!users.compareAndIncrement(id, r.version())) {
+      int current = users.currentRoleVersion(id);
+      throw ApiException.conflict(
+          "VERSION_CONFLICT", "角色集合已改变，请刷新后重试。", Map.of("currentVersion", current));
     }
+    users.replaceRoles(id, r.roleIds());
+    return assignment(users.findById(id).orElseThrow());
+  }
 
-    public UserDetailVO detail(HttpSession session, String id) {
-        authorization.require(session, "rbac:user:read");
-        UserPO user = userMapper.findById(id)
-                .orElseThrow(() -> ApiException.notFound("USER_NOT_FOUND", "用户不存在。"));
-        return buildDetail(user);
-    }
-
-    public UserRolesVO userRoles(HttpSession session, String id) {
-        authorization.require(session, "rbac:user:read");
-        userMapper.findById(id).orElseThrow(() -> ApiException.notFound("USER_NOT_FOUND", "用户不存在。"));
-        List<String> roleIds = userMapper.findUserRoleRows(id).stream().map(UserRolePO::roleId).toList();
-        return new UserRolesVO(id, roleIds, userMapper.roleVersion(id));
-    }
-
-    /** 创建用户：校验账号类型/部门/唯一性与角色集合后写入，返回 201 详情。 */
-    @Transactional
-    public UserDetailVO create(HttpSession session, CreateUserRequest request) {
-        authorization.require(session, "rbac:user:create");
-
-        if (!ACCOUNT_TYPES.contains(request.accountType().trim())) {
-            throw ApiException.badRequest("INVALID_ARGUMENT",
-                    "accountType 只允许 employee 或 temporary-ops。");
-        }
-        DepartmentPO department = departmentMapper.findById(request.departmentId().trim())
-                .orElseThrow(() -> ApiException.badRequest("UNKNOWN_DEPARTMENT", "部门不存在。",
-                        Map.of("departmentId", request.departmentId())));
-        String employeeNo = request.employeeNo().trim();
-        if (userMapper.findByEmployeeNo(employeeNo).isPresent()) {
-            throw ApiException.badRequest("DUPLICATE_ITEM", "员工号已存在。", Map.of("employeeNo", employeeNo));
-        }
-        String phone = normalize(request.phone());
-        if (phone != null && userMapper.findByPhone(phone).isPresent()) {
-            throw ApiException.badRequest("DUPLICATE_ITEM", "手机号已存在。", Map.of("phone", phone));
-        }
-        List<String> roleIds = request.roleIds() == null ? List.of() : request.roleIds();
-        if (new HashSet<>(roleIds).size() != roleIds.size()) {
-            throw ApiException.badRequest("DUPLICATE_ITEM", "roleIds 中存在重复元素。");
-        }
-        for (String roleId : roleIds) {
-            RolePO role = roleMapper.findById(roleId)
-                    .orElseThrow(() -> ApiException.badRequest("UNKNOWN_ROLE", "存在未知角色。",
-                            Map.of("roleId", roleId)));
-            if (SUPER_ADMIN_CODE.equals(role.code())) {
-                throw ApiException.forbidden("PROTECTED_ROLE", "不允许通过接口分配超级管理员角色。");
-            }
-        }
-
-        String id = "u-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
-        UserPO user = new UserPO(id, request.name().trim(), employeeNo, phone, department.id(),
-                normalize(request.position()), request.accountType().trim(), "active",
-                passwordEncoder.encode(request.initialPassword()), 1);
-        userMapper.insert(user);
-        for (String roleId : roleIds) {
-            userMapper.insertUserRole(id, roleId);
-        }
-        return buildDetail(user);
-    }
-
-    /** 变更用户状态：本人与超级管理员账号受保护。 */
-    public UserVO updateStatus(HttpSession session, String id, UpdateUserStatusRequest request) {
-        authorization.require(session, "rbac:user:update");
-        String status = request.status().trim();
-        if (!STATUS_VALUES.contains(status)) {
-            throw ApiException.badRequest("INVALID_ARGUMENT", "status 只允许 active 或 inactive。");
-        }
-        requireUser(id);
-        String currentUserId = authorization.requireUserId(session);
-        if (id.equals(currentUserId)) {
-            throw ApiException.forbidden("PROTECTED_ACCOUNT", "不能修改自己账号的状态。");
-        }
-        if (userMapper.hasRoleCode(id, SUPER_ADMIN_CODE)) {
-            throw ApiException.forbidden("PROTECTED_ACCOUNT", "不能修改超级管理员账号的状态。");
-        }
-        userMapper.updateStatus(id, status);
-        UserPO updated = requireUser(id);
-        return toUserVO(updated, departmentDict());
-    }
-
-    /** 物理删除用户：先清理角色关联；本人与超级管理员账号受保护。 */
-    @Transactional
-    public void delete(HttpSession session, String id) {
-        authorization.require(session, "rbac:user:delete");
-        requireUser(id);
-        String currentUserId = authorization.requireUserId(session);
-        if (id.equals(currentUserId)) {
-            throw ApiException.forbidden("PROTECTED_ACCOUNT", "不能删除自己的账号。");
-        }
-        if (userMapper.hasRoleCode(id, SUPER_ADMIN_CODE)) {
-            throw ApiException.forbidden("PROTECTED_ACCOUNT", "不能删除超级管理员账号。");
-        }
-        userMapper.deleteUserRoles(id);
-        userMapper.deleteById(id);
-    }
-
-    @Transactional
-    public UserRolesVO replaceRoles(HttpSession session, String id, ReplaceRolesRequest request) {
-        authorization.require(session, "rbac:user:assign-role");
-        requireUser(id);
-
-        if (new HashSet<>(request.roleIds()).size() != request.roleIds().size()) {
-            throw ApiException.badRequest("DUPLICATE_ITEM", "roleIds 中存在重复元素。");
-        }
-        for (String roleId : request.roleIds()) {
-            if (!roleMapper.exists(roleId)) {
-                throw ApiException.badRequest("UNKNOWN_ROLE", "存在未知角色。", Map.of("roleId", roleId));
-            }
-        }
-
-        int current = userMapper.roleVersion(id);
-        if (request.version() != current) {
-            throw ApiException.conflict("VERSION_CONFLICT", "授权已被其他人修改，请重新读取并复核。",
-                    Map.of("expectedVersion", request.version(), "currentVersion", current));
-        }
-
-        int next = current + 1;
-        userMapper.replaceRoles(id, request.roleIds(), next);
-        return new UserRolesVO(id, request.roleIds(), next);
-    }
-
-    private UserPO requireUser(String id) {
-        return userMapper.findById(id)
-                .orElseThrow(() -> ApiException.notFound("USER_NOT_FOUND", "用户不存在。"));
-    }
-
-    private UserDetailVO buildDetail(UserPO user) {
-        DepartmentPO department = user.departmentId() == null ? null
-                : departmentMapper.findById(user.departmentId()).orElse(null);
-        List<String> roles = userMapper.findEnabledRoleIds(user.id()).stream()
-                .map(roleMapper::findById)
-                .flatMap(java.util.Optional::stream)
-                .map(RolePO::name)
-                .toList();
-        List<String> permissionCodes = authorization.effectivePermissions(user.id()).permissionCodes();
-        return new UserDetailVO(
-                user.id(), user.name(), user.employeeNo(), user.departmentId(),
-                department == null ? null : department.name(),
-                department == null ? null : department.branch(),
-                user.position(), user.status(), user.accountType(), user.phone(),
-                roles, permissionCodes);
-    }
-
-    private Map<String, DepartmentPO> departmentDict() {
-        return departmentMapper.findAll().stream()
-                .collect(Collectors.toMap(DepartmentPO::id, Function.identity()));
-    }
-
-    private UserVO toUserVO(UserPO user, Map<String, DepartmentPO> departments) {
-        DepartmentPO department = user.departmentId() == null ? null : departments.get(user.departmentId());
-        return new UserVO(
-                user.id(), user.name(), user.employeeNo(), user.departmentId(),
-                department == null ? null : department.name(),
-                department == null ? null : department.branch(),
-                user.position(), user.status(), user.accountType());
-    }
-
-    private static String normalize(String value) {
-        if (value == null) {
-            return null;
-        }
-        String trimmed = value.trim();
-        return trimmed.isEmpty() ? null : trimmed;
-    }
-
-    private int clamp(int pageSize) {
-        if (pageSize < 1) {
-            return 20;
-        }
-        return Math.min(pageSize, MAX_PAGE_SIZE);
-    }
+  public static String normalize(String value) {
+    return value == null || value.isBlank() ? null : value.trim();
+  }
 }

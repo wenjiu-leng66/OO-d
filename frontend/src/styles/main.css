@@ -1,6 +1,10 @@
 :root { font-family: "Microsoft YaHei", "PingFang SC", Arial, sans-serif; color: #172033; background: #f5f7fb; --ink: #172033; --muted: #718096; --blue: #3867f2; }
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; }
+.stage1-notice { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 20px; min-height: 42px; box-sizing: border-box; padding: 10px 22px; color: #51617c; background: #edf3ff; border-bottom: 1px solid #d9e4f7; font-size: 12px; }
+.stage1-notice strong { margin-right: 12px; color: #314d82; }
+.stage1-notice nav { display: flex; gap: 18px; }
+.stage1-notice a { color: #355ca8; text-underline-offset: 3px; }
 .app-shell { min-height: 100vh; background: #f5f7fb; }
 .sidebar { background: linear-gradient(180deg, #17243b 0%, #101a2d 100%); color: #fff; box-shadow: 8px 0 28px rgba(25, 40, 70, .08); }
 .brand { display: flex; align-items: center; gap: 11px; padding: 27px 22px 30px; font-size: 16px; font-weight: 700; letter-spacing: .03em; }

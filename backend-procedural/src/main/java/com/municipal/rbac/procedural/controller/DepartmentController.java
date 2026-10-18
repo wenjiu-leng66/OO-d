@@ -1,27 +1,30 @@
 package com.municipal.rbac.procedural.controller;
 
 import com.municipal.rbac.procedural.service.DepartmentService;
-import com.municipal.rbac.procedural.vo.DepartmentNodeVO;
 import jakarta.servlet.http.HttpSession;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import java.util.*;
+import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
-
-/** 部门组织树。 */
 @RestController
 @RequestMapping("/api/v1/departments")
 public class DepartmentController {
+  private final DepartmentService departments;
 
-    private final DepartmentService departmentService;
+  public DepartmentController(DepartmentService departments) {
+    this.departments = departments;
+  }
 
-    public DepartmentController(DepartmentService departmentService) {
-        this.departmentService = departmentService;
-    }
+  @GetMapping
+  public List<Map<String, Object>> tree(HttpSession session) {
+    return departments.tree(session);
+  }
 
-    @GetMapping
-    public List<DepartmentNodeVO> tree(HttpSession session) {
-        return departmentService.tree(session);
-    }
+  @GetMapping("/{id}/members")
+  public Map<String, Object> members(
+      @PathVariable String id,
+      @RequestParam(defaultValue = "1") int page,
+      @RequestParam(defaultValue = "20") int pageSize,
+      HttpSession session) {
+    return departments.members(session, id, page, pageSize);
+  }
 }
