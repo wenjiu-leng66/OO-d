@@ -26,14 +26,14 @@
 | OpenAPI 语法/引用及操作覆盖 | 通过 | Python3.12.14 + openapi-spec-validator验证OpenAPI3.0.3，25路径/33操作；静态契约33操作与运行`/v3/api-docs`的33操作集合完全相同，missing/undocumented均空；每个操作声明所需权限 |
 | 前端生产构建 | 通过 | `npm --prefix frontend ci`、`npm --prefix frontend run build`成功 |
 | 仓库、链接与空白检查 | 通过 | Bundled Python运行`python scripts/check_repository.py`，本地链接/UTF-8/合成关联通过；所辖README/API/docs的`git diff --check`通过，最终提交前再检查全树 |
-| 真 HTTP + Cookie 冒烟 | 通过 | `python scripts/smoke_http.py --base-url http://127.0.0.1:18080`（初始密码由运行环境提供），最终29项测试对应版本在MySQL8.4.8真实Java后端22个输出检查点通过；Nginx/Docker的`--check-web`留待用户部署时执行 |
+| 真 HTTP + Cookie 冒烟 | 通过 | `python scripts/smoke_http.py --base-url http://127.0.0.1:18080`（初始密码由运行环境提供），最终29项测试对应版本在MySQL8.4.8真实Java后端22个输出检查点通过；GitHub临时Linux容器环境的 `--check-web` 也通过，证据见下方CI记录 |
 | 真MySQL SELF管理范围 | 通过 | 自建SELF管理角色实测部门成员仅本人、SELF不能新建他人账号，两项均通过；与29项中的对应H2回归分开记录 |
 | 本地浏览器页面 | 通过 | 本地5174原型页面实际登录成功；Swagger实际加载静态契约，显示“第一阶段统一API”、版本0.3.0；不是云服务器或Docker运行证明 |
-| MySQL 服务重启后持久化 | 通过 | `smoke_http.py --mode persistence-create/verify/cleanup`：本机Java和MySQL两个进程停止重启后验证账号仍在，种子跳过已有数据，验证后已清理标记。Docker卷重启留待部署环境执行 |
+| MySQL 服务重启后持久化 | 通过 | `smoke_http.py --mode persistence-create/verify/cleanup`：本机Java和MySQL两个进程停止重启后验证账号仍在，种子跳过已有数据，验证后已清理标记；GitHub容器环境保留命名卷重建后也通过 |
 | 全量 Excel 导入与重复导入 T-12 | 待执行 | 需要三份原始 Excel；合成单元测试不替代本项 |
 | 万条合成数据本机HTTP查询性能 | 通过 | 临时增加10000合成用户，总10040（含1个持久化标记）；暖机1次+测量5次，users page20中位64.29ms/最大70.91ms、ledger中位47.25ms/最大51.26ms、me/permissions中位31.09ms/最大41.27ms。本机端到端HTTP测量，仅证明这三项合成场景在1秒内 |
 | 正式全量数据/保存及DB性能 | 待执行 | 正式Excel全量、保存授权≤1s、数据库纯鉴权EXPLAIN ANALYZE≤10ms仍须补测；上行HTTP数据不能替代 |
-| Linux Docker Compose 构建运行 | 待执行 | 需要可用 Docker 环境；保存构建/容器健康记录 |
+| Linux Docker Compose 构建运行 | 通过 | GitHub临时runner构建MySQL/Java/Nginx三服务，真实HTTP与静态入口、运行API契约一致性、仅重建backend后的代理访问、保留卷重建和清理标记全部成功；没有连接用户服务器 |
 | 云服务器上传、外网访问 | 待执行 | 用户明确要求本轮不连接或操作服务器；部署脚本已准备，待用户自行部署，不作为本轮代码工作阻塞 |
 
 ## 手工验收逐项记录模板
@@ -61,3 +61,7 @@
 ## 完成结论
 
 本轮按用户最新要求完成仓库整合和本机验证，未连接或操作其服务器。已准备服务器部署脚本与自测步骤，留待用户自行执行。后端29项、前端50项、导入41项、真MySQL HTTP22检查点、SELF管理范围及本机重启持久化均通过，静态契约与运行接口33项完全覆盖，原型和静态API设计已在本地浏览器查看；原始Excel全量、数据库纯鉴权性能和服务器外网验收仍需后续实测，不能由合成测试替代。
+
+## CI 容器验收证据
+
+[MySQL Docker HTTP acceptance](https://github.com/wenjiu-leng66/RBAC-Permission-System/actions/runs/39111641339/job/117628866178) 在源码 0fe6747a020044e85d921cdb47a88e00b570de8e 上成功。该轮仓库检查只因历史 Markdown 空白失败，已在 fc0ec1e 修正；最终整轮状态以 PR #18 最新检查为准。
