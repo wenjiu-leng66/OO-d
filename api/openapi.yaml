@@ -1,6 +1,989 @@
 openapi: 3.0.3
 info:
   title: RBAC Permission System API
-  version: 0.0.0-draft
-  description: 仓库准备阶段的接口契约占位。paths 为空，尚无实现或正式确定的接口。
-paths: {}
+  version: 0.1.0-rbac0-draft
+  description: |
+    RBAC0 阶段第一版接口契约，由成员 6 统筹整理。
+
+    状态：草案，待成员 2、3、4 确认并等待后端联调。本文档描述预期接口，
+    不代表接口已经实现、部署或通过权限测试。
+
+    当前草案采用 HttpOnly 会话 Cookie 表达认证。若团队最终选择 Bearer Token，
+    需要同步修改本契约、前端客户端、两套后端和测试，不能只修改某一端。
+
+    所有受保护接口都必须由后端根据已验证会话重新执行权限和数据范围检查。
+    前端传入的用户 ID、角色、权限列表或按钮可见状态不能作为授权依据。
+  x-status: draft-pending-backend-integration
+  contact:
+    name: 成员 6（API 统筹与验收）
+servers:
+  - url: http://localhost:8080
+    description: 面向功能后端候选地址（待实现）
+  - url: http://localhost:8081
+    description: 面向对象后端候选地址（后续阶段）
+tags:
+  - name: Authentication
+    description: 登录、退出和当前会话
+  - name: Users
+    description: 用户查询与维护
+  - name: Organization
+    description: 部门组织目录
+  - name: Roles
+    description: 角色目录与用户角色分配
+  - name: Permissions
+    description: 权限和资源目录、角色授权
+paths:
+  /api/v1/auth/login:
+    post:
+      tags: [Authentication]
+      summary: 登录并建立会话
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: 登录成功，会话 Cookie 通过响应头建立
+          headers:
+            Set-Cookie:
+              description: HttpOnly 会话 Cookie，具体名称和属性待后端确认
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          description: 账号或密码错误
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: INVALID_CREDENTIALS
+                  message: 账号或密码错误
+                  requestId: req-login-001
+        '403':
+          description: 账号被停用或禁止登录
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/auth/logout:
+    post:
+      tags: [Authentication]
+      summary: 退出并使当前会话失效
+      operationId: logout
+      responses:
+        '204':
+          description: 已退出；重复退出的处理方式待联调确认
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+
+  /api/v1/me:
+    get:
+      tags: [Authentication]
+      summary: 查询当前登录用户
+      operationId: getCurrentUser
+      responses:
+        '200':
+          description: 当前用户资料
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CurrentUser'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/me/permissions:
+    get:
+      tags: [Authentication, Permissions]
+      summary: 查询当前用户的 RBAC0 有效权限
+      description: |
+        返回当前用户已分配且启用角色的权限去重并集。RBAC0 不计算角色继承，
+        也不提前引入动态角色激活。权限变化对已有会话的生效时机待后端联调确认。
+      operationId: getMyPermissions
+      responses:
+        '200':
+          description: 当前权限快照；无权限时返回空数组
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MyPermissions'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/users:
+    get:
+      tags: [Users]
+      summary: 分页查询可见用户
+      operationId: listUsers
+      x-required-permission: rbac:user:read
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: keyword
+          in: query
+          schema:
+            type: string
+            maxLength: 100
+          description: 姓名、员工号、手机号或岗位关键词
+        - name: departmentId
+          in: query
+          schema:
+            type: string
+          description: 部门筛选；后端仍按当前会话范围裁剪结果
+        - name: accountType
+          in: query
+          schema:
+            $ref: '#/components/schemas/AccountType'
+      responses:
+        '200':
+          description: 用户分页结果；无匹配项返回空数组
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      tags: [Users]
+      summary: 创建用户账号
+      operationId: createUser
+      x-required-permission: rbac:user:create
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '201':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserDetail'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: 员工号或手机号重复等冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/users/{userId}:
+    get:
+      tags: [Users]
+      summary: 查询用户详情
+      operationId: getUser
+      x-required-permission: rbac:user:read
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: 用户详情
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserDetail'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/users/{userId}/status:
+    patch:
+      tags: [Users]
+      summary: 修改用户启用状态
+      operationId: updateUserStatus
+      x-required-permission: rbac:user:update
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              additionalProperties: false
+              properties:
+                status:
+                  $ref: '#/components/schemas/UserStatus'
+      responses:
+        '200':
+          description: 状态修改成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserDetail'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: 不允许停用当前账号或唯一超级管理员等业务冲突
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/users/{userId}/roles:
+    get:
+      tags: [Users, Roles]
+      summary: 查询用户的完整角色集合
+      operationId: getUserRoles
+      x-required-permissions:
+        - rbac:user:read
+        - rbac:role:read
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      responses:
+        '200':
+          description: 用户角色集合；未分配角色时 roleIds 为空数组
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserRoleAssignment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Users, Roles]
+      summary: 原子替换用户的完整角色集合
+      description: |
+        roleIds 是保存后的完整集合，不是增量添加。空数组表示撤销全部角色；
+        缺少 roleIds、包含重复项、未知角色或旧版本必须拒绝，失败时不能部分写入。
+      operationId: replaceUserRoles
+      x-required-permission: rbac:user:assign-role
+      parameters:
+        - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReplaceUserRolesRequest'
+      responses:
+        '200':
+          description: 替换成功，返回已保存集合和新版本
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserRoleAssignment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/v1/departments:
+    get:
+      tags: [Organization]
+      summary: 查询当前用户可见的部门树
+      operationId: listDepartments
+      x-required-permission: rbac:department:read
+      responses:
+        '200':
+          description: 部门树；无可见部门时返回空数组
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Department'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/roles:
+    get:
+      tags: [Roles]
+      summary: 分页查询可见角色
+      operationId: listRoles
+      x-required-permission: rbac:role:read
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: keyword
+          in: query
+          schema:
+            type: string
+            maxLength: 100
+      responses:
+        '200':
+          description: 角色分页结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RolePage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/roles/{roleId}/permissions:
+    get:
+      tags: [Roles, Permissions]
+      summary: 查询角色的完整直接权限集合
+      description: RBAC0 只返回直接授权，不包含角色继承权限。
+      operationId: getRolePermissions
+      x-required-permissions:
+        - rbac:role:read
+        - rbac:permission:read
+      parameters:
+        - $ref: '#/components/parameters/RoleId'
+      responses:
+        '200':
+          description: 角色直接权限集合
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RolePermissionAssignment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Roles, Permissions]
+      summary: 原子替换角色的完整直接权限集合
+      description: |
+        permissionCodes 是保存后的完整直接权限集合。空数组表示撤销全部直接权限；
+        失败时不得部分保存。后端还必须检查操作者是否允许授出所选权限。
+      operationId: replaceRolePermissions
+      x-required-permission: rbac:role:grant
+      parameters:
+        - $ref: '#/components/parameters/RoleId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReplaceRolePermissionsRequest'
+      responses:
+        '200':
+          description: 替换成功，返回已保存集合和新版本
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RolePermissionAssignment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/v1/permissions:
+    get:
+      tags: [Permissions]
+      summary: 分页查询可授权权限
+      operationId: listPermissions
+      x-required-permission: rbac:permission:read
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: systemId
+          in: query
+          schema:
+            type: string
+        - name: moduleId
+          in: query
+          schema:
+            type: string
+        - name: keyword
+          in: query
+          schema:
+            type: string
+            maxLength: 100
+      responses:
+        '200':
+          description: 权限分页结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PermissionPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/resources:
+    get:
+      tags: [Permissions]
+      summary: 分页查询资源目录节点
+      operationId: listResources
+      x-required-permission: rbac:permission:read
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: parentId
+          in: query
+          schema:
+            type: string
+          description: 不传表示查询根节点，传入时查询直接子节点
+      responses:
+        '200':
+          description: 资源目录分页结果
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourcePage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: RBAC_SESSION
+      description: 草案名称；正式 Cookie 名称、SameSite、Secure、有效期和 CSRF 策略待确认
+  parameters:
+    Page:
+      name: page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+      description: 页码从 1 开始
+    PageSize:
+      name: pageSize
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    UserId:
+      name: userId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    RoleId:
+      name: roleId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+  responses:
+    BadRequest:
+      description: 请求字段、参数或集合元素不合法
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthenticated:
+      description: 未登录、会话缺失或会话失效
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: UNAUTHENTICATED
+              message: 请先登录
+              requestId: req-auth-001
+    Forbidden:
+      description: 已认证，但缺少操作权限或目标数据不在允许范围
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: FORBIDDEN
+              message: 没有执行此操作的权限
+              requestId: req-authz-001
+    NotFound:
+      description: 路径指定的对象不存在，或按最终防枚举策略不可见
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Conflict:
+      description: 版本过期或业务状态冲突；失败时不得部分写入
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: VERSION_CONFLICT
+              message: 数据已被其他人修改，请重新读取后复核
+              requestId: req-conflict-001
+              details:
+                expectedVersion: 7
+                currentVersion: 8
+  schemas:
+    LoginRequest:
+      type: object
+      required: [account, password]
+      additionalProperties: false
+      properties:
+        account:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: 员工号或手机号
+        password:
+          type: string
+          minLength: 1
+          maxLength: 128
+          format: password
+    LoginResponse:
+      type: object
+      required: [user]
+      additionalProperties: false
+      properties:
+        user:
+          $ref: '#/components/schemas/CurrentUser'
+    CurrentUser:
+      type: object
+      required: [id, name, employeeNo, departmentId, departmentName, status]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        employeeNo:
+          type: string
+        departmentId:
+          type: string
+        departmentName:
+          type: string
+        status:
+          $ref: '#/components/schemas/UserStatus'
+    MyPermissions:
+      type: object
+      required: [userId, roleIds, permissionCodes, scopes, version]
+      additionalProperties: false
+      properties:
+        userId:
+          type: string
+        roleIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+        permissionCodes:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/PermissionCode'
+        scopes:
+          type: array
+          items:
+            $ref: '#/components/schemas/PermissionScope'
+        version:
+          type: integer
+          minimum: 0
+    PermissionScope:
+      type: object
+      required: [permissionCode, scope]
+      additionalProperties: false
+      properties:
+        permissionCode:
+          $ref: '#/components/schemas/PermissionCode'
+        scope:
+          type: string
+          enum: [all, department, self]
+          description: 范围集合及合并规则仍待老师和团队确认
+    UserSummary:
+      type: object
+      required: [id, name, employeeNo, departmentId, departmentName, position, status, accountType]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        employeeNo:
+          type: string
+        departmentId:
+          type: string
+        departmentName:
+          type: string
+        branch:
+          type: string
+        position:
+          type: string
+        status:
+          $ref: '#/components/schemas/UserStatus'
+        accountType:
+          $ref: '#/components/schemas/AccountType'
+    UserDetail:
+      allOf:
+        - $ref: '#/components/schemas/UserSummary'
+        - type: object
+          required: [roleIds, roles, permissionCodes]
+          properties:
+            phone:
+              type: string
+              description: 是否可见由后端权限和数据范围决定
+            roleIds:
+              type: array
+              uniqueItems: true
+              items:
+                type: string
+            roles:
+              type: array
+              items:
+                type: string
+            permissionCodes:
+              type: array
+              uniqueItems: true
+              items:
+                $ref: '#/components/schemas/PermissionCode'
+    UserPage:
+      type: object
+      required: [items, page, pageSize, total]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/UserSummary'
+        page:
+          type: integer
+          minimum: 1
+        pageSize:
+          type: integer
+          minimum: 1
+        total:
+          type: integer
+          minimum: 0
+    CreateUserRequest:
+      type: object
+      required: [name, employeeNo, phone, initialPassword, departmentId, position, accountType, roleIds]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+        employeeNo:
+          type: string
+          minLength: 1
+        phone:
+          type: string
+          minLength: 1
+        initialPassword:
+          type: string
+          format: password
+          minLength: 6
+          maxLength: 64
+        departmentId:
+          type: string
+        position:
+          type: string
+        accountType:
+          $ref: '#/components/schemas/AccountType'
+        roleIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+    AccountType:
+      type: string
+      enum: [employee, temporary-ops]
+    UserStatus:
+      type: string
+      enum: [active, inactive]
+    Department:
+      type: object
+      required: [id, name, type, children]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+          enum: [company, branch, department]
+        managerUserId:
+          type: string
+          nullable: true
+        managerName:
+          type: string
+          nullable: true
+        parentId:
+          type: string
+          nullable: true
+        parentName:
+          type: string
+          nullable: true
+        branch:
+          type: string
+        path:
+          type: string
+        employeeCount:
+          type: integer
+          minimum: 0
+        children:
+          type: array
+          items:
+            $ref: '#/components/schemas/Department'
+    RoleSummary:
+      type: object
+      required: [id, name, description, enabled, version]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        code:
+          type: string
+          description: 稳定角色码，是否在 RBAC0 响应中必填待确认
+        name:
+          type: string
+        description:
+          type: string
+        enabled:
+          type: boolean
+        version:
+          type: integer
+          minimum: 0
+    RolePage:
+      type: object
+      required: [items, page, pageSize, total]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RoleSummary'
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        total:
+          type: integer
+          minimum: 0
+    Permission:
+      type: object
+      required: [code, name, systemId, systemName, moduleId, moduleName, resourceCode, resourceName, action, scopeOptions]
+      additionalProperties: false
+      properties:
+        code:
+          $ref: '#/components/schemas/PermissionCode'
+        name:
+          type: string
+        systemId:
+          type: string
+        systemName:
+          type: string
+        moduleId:
+          type: string
+        moduleName:
+          type: string
+        resourceCode:
+          type: string
+        resourceName:
+          type: string
+        action:
+          type: string
+        scopeOptions:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            enum: [all, department, self]
+    PermissionPage:
+      type: object
+      required: [items, page, pageSize, total]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Permission'
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        total:
+          type: integer
+          minimum: 0
+    ResourceNode:
+      type: object
+      required: [id, name, type, parentId, hasChildren]
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+          enum: [system, module, function]
+        parentId:
+          type: string
+          nullable: true
+        hasChildren:
+          type: boolean
+    ResourcePage:
+      type: object
+      required: [items, page, pageSize, total]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ResourceNode'
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        total:
+          type: integer
+          minimum: 0
+    UserRoleAssignment:
+      type: object
+      required: [userId, roleIds, version]
+      additionalProperties: false
+      properties:
+        userId:
+          type: string
+        roleIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+        version:
+          type: integer
+          minimum: 0
+    ReplaceUserRolesRequest:
+      type: object
+      required: [roleIds, version]
+      additionalProperties: false
+      properties:
+        roleIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+        version:
+          type: integer
+          minimum: 0
+    RolePermissionAssignment:
+      type: object
+      required: [roleId, permissionCodes, version]
+      additionalProperties: false
+      properties:
+        roleId:
+          type: string
+        permissionCodes:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/PermissionCode'
+        version:
+          type: integer
+          minimum: 0
+    ReplaceRolePermissionsRequest:
+      type: object
+      required: [permissionCodes, version]
+      additionalProperties: false
+      properties:
+        permissionCodes:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/PermissionCode'
+        version:
+          type: integer
+          minimum: 0
+    PermissionCode:
+      type: string
+      minLength: 1
+      pattern: '^[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*:[a-z0-9][a-z0-9._-]*$'
+      example: rbac:user:read
+    ErrorResponse:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, requestId]
+          additionalProperties: false
+          properties:
+            code:
+              type: string
+              example: FORBIDDEN
+            message:
+              type: string
+              example: 没有执行此操作的权限
+            requestId:
+              type: string
+              description: 用于关联服务端日志，不包含会话或秘密
+            details:
+              type: object
+              additionalProperties: true
+              description: 可选错误细节，不得泄露密码、令牌或不可见对象资料
+security:
+  - sessionCookie: []

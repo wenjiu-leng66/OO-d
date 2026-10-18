@@ -1,6 +1,6 @@
 # 测试目录
 
-当前没有业务测试。预留 unit、contract、integration、e2e、fixtures 目录。
+当前没有可连接真实后端的业务自动化测试。成员 6 已完成 [RBAC0 API 与权限拦截测试用例第一版草案](../docs/testing/member6-rbac0-api-test-cases.md)，等待成员 4 提供后端和合成测试数据后实现并执行。
 
 - unit：核心授权与纯计算等单元测试。成员 1 的 Excel 导入脚本测试：`python tests/unit/test_import_excel.py`，只需 Python 3 标准库和合成数据，不需要原始 Excel 或数据库。
 - contract：同一外部契约对两种后端的检查。
