@@ -1,1 +1,1 @@
-<template><el-result icon="warning" title="页面不存在" sub-title="请从左侧导航选择页面"><template #extra><el-button type="primary" @click="$router.push('/')">返回首页</el-button></template></el-result></template>
+<template><el-result icon="warning" title="404 页面不存在" sub-title="地址有误或功能点编号不存在，请从左侧菜单选择页面"><template #extra><el-button type="primary" @click="$router.push('/portal')">返回门户首页</el-button></template></el-result></template>

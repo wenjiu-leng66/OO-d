@@ -84,10 +84,78 @@
     return Array.from(permissions).sort();
   }
 
+  // 数据范围：全部 > 本部门 > 本人（需求规格 GRANT-04、AUTHZ-03）。
+  var SCOPE_RANK = { SELF: 1, DEPT: 2, ALL: 3 };
+
+  function isScope(value) {
+    return typeof value === 'string' && Object.prototype.hasOwnProperty.call(SCOPE_RANK, value);
+  }
+
+  function widerScope(a, b) {
+    if (!isScope(a)) return isScope(b) ? b : null;
+    if (!isScope(b)) return a;
+    return SCOPE_RANK[b] > SCOPE_RANK[a] ? b : a;
+  }
+
+  // 角色授权为 grants: [{ code, scope }]；旧样例只有 permissionCodes 时视为“全部”。
+  function roleGrantList(role) {
+    if (Array.isArray(role.grants)) {
+      return role.grants.filter(function (grant) {
+        return grant && isCode(grant.code) && isScope(grant.scope);
+      });
+    }
+    if (Array.isArray(role.permissionCodes)) {
+      return role.permissionCodes.filter(isCode).map(function (code) { return { code: code, scope: 'ALL' }; });
+    }
+    return [];
+  }
+
+  // 有效权限：已分配且启用的角色授权取并集；同一权限码取最大范围，不同权限码的范围互不影响。
+  function effectiveGrants(user, roles) {
+    if (!user || !Array.isArray(user.roleIds) || !Array.isArray(roles)) return [];
+    var assigned = new Set(user.roleIds.filter(isCode));
+    var byCode = new Map();
+    roles.forEach(function (role) {
+      if (!role || !isCode(role.id) || !assigned.has(role.id) ||
+          (role.enabled !== undefined && role.enabled !== true)) return;
+      roleGrantList(role).forEach(function (grant) {
+        var entry = byCode.get(grant.code);
+        if (!entry) {
+          entry = { code: grant.code, scope: grant.scope, sources: [] };
+          byCode.set(grant.code, entry);
+        }
+        entry.scope = widerScope(entry.scope, grant.scope);
+        entry.sources.push({ roleId: role.id, roleName: role.name, scope: grant.scope });
+      });
+    });
+    return Array.from(byCode.values()).sort(function (a, b) { return a.code < b.code ? -1 : a.code > b.code ? 1 : 0; });
+  }
+
+  // 会话中某权限码的数据范围；没有该权限或没有范围信息时返回 null（默认拒绝）。
+  function permissionScope(session, code) {
+    if (!hasPermission(session, code) || !session.scopes) return null;
+    var scope = session.scopes[code];
+    return isScope(scope) ? scope : null;
+  }
+
+  // 目标记录是否落在范围内。target: { ownerId, departmentId }；
+  // isWithin(目标部门, 用户部门) 判断目标部门是否为用户部门本身或其下级，由调用方按部门树实现。
+  function scopeCovers(scope, actor, target, isWithin) {
+    if (!isScope(scope) || !actor || !target) return false;
+    if (scope === 'ALL') return true;
+    if (scope === 'SELF') return isCode(actor.userId) && actor.userId === target.ownerId;
+    return typeof isWithin === 'function' && isCode(actor.departmentId) &&
+      isCode(target.departmentId) && isWithin(target.departmentId, actor.departmentId) === true;
+  }
+
   return Object.freeze({
     hasPermission: hasPermission,
     canVisit: canVisit,
     visibleRoutes: visibleRoutes,
-    effectivePermissionCodes: effectivePermissionCodes
+    effectivePermissionCodes: effectivePermissionCodes,
+    widerScope: widerScope,
+    effectiveGrants: effectiveGrants,
+    permissionScope: permissionScope,
+    scopeCovers: scopeCovers
   });
 });

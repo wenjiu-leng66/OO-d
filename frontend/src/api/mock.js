@@ -1,420 +1,484 @@
-const users = [
-  { id: 'user-001', name: '系统管理员', employeeNo: 'E001', branch: '总公司', departmentId: 'dept-01', departmentName: '办公室', position: '系统管理员', status: 'active', accountType: 'super-admin', phone: '13800000001', roles: ['超级管理员'], permissionCodes: ['rbac:user:read', 'rbac:user:create', 'rbac:role:read', 'rbac:permission:read'] },
-  { id: 'user-002', name: '李文', employeeNo: 'E002', branch: '总公司', departmentId: 'dept-02', departmentName: '人事部', position: '部门管理员', status: 'active', accountType: 'department-admin', phone: '13800000002', roles: ['人事部管理员'], permissionCodes: ['rbac:user:read', 'rbac:department:read'] },
-  { id: 'user-003', name: '王强', employeeNo: 'E003', branch: '总公司', departmentId: 'dept-03', departmentName: '财务部', position: '会计', status: 'inactive', accountType: 'employee', phone: '13800000003', roles: ['财务查看员'], permissionCodes: ['finance:report:read'] },
-  { id: 'user-004', name: '赵敏', employeeNo: 'E004', branch: '总公司', departmentId: 'dept-02', departmentName: '人事部', position: '人事专员', status: 'active', accountType: 'employee', phone: '13800000004', roles: ['普通员工'], permissionCodes: ['hr:self:read'] },
-  { id: 'user-005', name: '陈工', employeeNo: 'OPS001', branch: '总公司', departmentId: 'dept-07', departmentName: '工程技术部', position: '临时运维人员', status: 'active', accountType: 'temporary-ops', phone: '13800000005', roles: ['临时运维查看员'], permissionCodes: ['ops:system-status:read', 'ops:log:read'] }
-]
+// 模拟后端：页面统一通过这里调用，规则按需求规格第 3 章实现，正式后端必须再次校验。
+// 数据全部是合成数据，只保存在本次页面运行的内存中，刷新后恢复。
+import { policy } from '../policy-adapter.js'
+import {
+  functions, functionById, systems, modules, actions, catalogPermissions, adminMapping,
+  parsePermissionCode, scopeLabel
+} from './fixtures/catalog.js'
+import { departments as departmentRows, departmentTypes, roleRows, roleGrants, createUsers } from './fixtures/demo-data.js'
 
-const departments = [
-  { id: 'dept-root', name: '总公司', type: 'company', manager: '薛峰', branch: '总公司', parentName: '', path: '总公司', employeeCount: 120, children: [
-      { id: 'dept-01', name: '办公室', type: 'department', manager: '薛峰', parentName: '总公司', branch: '总公司', path: '总公司 / 办公室', employeeCount: 12, children: [] },
-      { id: 'dept-02', name: '人力资源部', type: 'department', manager: '曹瑞', parentName: '总公司', branch: '总公司', path: '总公司 / 人力资源部', employeeCount: 18, children: [] },
-      { id: 'dept-03', name: '财务部', type: 'department', manager: '薛福', parentName: '总公司', branch: '总公司', path: '总公司 / 财务部', employeeCount: 21, children: [] },
-      { id: 'branch-road', name: '道路工程分公司', type: 'branch', manager: '曾禄', parentName: '总公司', branch: '道路工程分公司', path: '总公司 / 道路工程分公司', employeeCount: 69, children: [
-          { id: 'dept-road-office', name: '综合办公室', type: 'department', manager: '卢晓超', parentName: '道路工程分公司', branch: '道路工程分公司', path: '总公司 / 道路工程分公司 / 综合办公室', employeeCount: 16, children: [] },
-          { id: 'dept-road-tech', name: '工程技术部', type: 'department', manager: '苏武瑞', parentName: '道路工程分公司', branch: '道路工程分公司', path: '总公司 / 道路工程分公司 / 工程技术部', employeeCount: 53, children: [] }
-        ] },
-      { id: 'branch-water', name: '水务运营分公司', type: 'branch', manager: '肖志华', parentName: '总公司', branch: '水务运营分公司', path: '总公司 / 水务运营分公司', employeeCount: 44, children: [
-          { id: 'dept-water-ops', name: '运营管理部', type: 'department', manager: '陆永', parentName: '水务运营分公司', branch: '水务运营分公司', path: '总公司 / 水务运营分公司 / 运营管理部', employeeCount: 44, children: [] }
-        ] }
-    ] }
-]
+// 演示口令只用于本原型；正式初始密码在导入时通过参数指定，不写进仓库（IMPORT-06）。
+export const DEMO_PASSWORD = '123456'
 
-function flattenDepartments(nodes, result = []) {
-  nodes.forEach(node => { result.push(node); if (node.children?.length) flattenDepartments(node.children, result) })
-  return result
-}
-const departmentOptions = flattenDepartments(departments).filter(item => item.type === 'department')
-
-const roleOptions = [
-  { id: 'role-employee', name: '普通员工', permissionCodes: ['hr:self:read'] },
-  { id: 'role-department-admin', name: '部门管理员', permissionCodes: ['rbac:user:read', 'rbac:user:create', 'rbac:user:update', 'rbac:user:assign-role', 'rbac:department:read'] },
-  { id: 'role-ops-reader', name: '临时运维查看员', permissionCodes: ['ops:system-status:read', 'ops:log:read'] },
-  { id: 'role-finance-reader', name: '财务查看员', permissionCodes: ['finance:report:read'] },
-  { id: 'role-document-reader', name: '公文查看员', permissionCodes: ['oa:document:read'] },
-  { id: 'role-document-editor', name: '公文编辑员', permissionCodes: ['oa:document:read', 'oa:document:edit'] },
-  { id: 'role-admin', name: '超级管理员', permissionCodes: ['rbac:user:read', 'rbac:user:create', 'rbac:user:update', 'rbac:user:assign-role', 'rbac:department:read', 'rbac:role:read', 'rbac:permission:read'] }
-]
-
-
-// 成员 3 原始合成样例；演示管理员在共享应用中映射到唯一超级管理员 E001。
-export const member3Fixtures = {
-  "permissions": [
-    {
-      "code": "rbac:role:read",
-      "system": "权限管理系统",
-      "module": "角色维护",
-      "name": "查看角色",
-      "detail": "查看角色列表及已保存授权"
-    },
-    {
-      "code": "rbac:role:grant",
-      "system": "权限管理系统",
-      "module": "角色维护",
-      "name": "修改角色授权",
-      "detail": "保存或撤销角色拥有的功能权限"
-    },
-    {
-      "code": "rbac:permission:read",
-      "system": "权限管理系统",
-      "module": "资源目录",
-      "name": "查看资源目录",
-      "detail": "查询系统、模块与功能权限"
-    },
-    {
-      "code": "rbac:user:read",
-      "system": "权限管理系统",
-      "module": "用户角色",
-      "name": "查看用户",
-      "detail": "查看用户信息与角色分配"
-    },
-    {
-      "code": "rbac:user:assign-role",
-      "system": "权限管理系统",
-      "module": "用户角色",
-      "name": "分配用户角色",
-      "detail": "完整替换用户的角色列表"
-    },
-    {
-      "code": "oa:document:read",
-      "system": "办公协同系统",
-      "module": "文档管理",
-      "name": "查看文档",
-      "detail": "访问文档列表"
-    },
-    {
-      "code": "oa:document:create",
-      "system": "办公协同系统",
-      "module": "文档管理",
-      "name": "新建文档",
-      "detail": "创建一份演示文档"
-    },
-    {
-      "code": "oa:document:edit",
-      "system": "办公协同系统",
-      "module": "文档管理",
-      "name": "编辑文档",
-      "detail": "将文档调整为修改草稿"
-    },
-    {
-      "code": "oa:document:approve",
-      "system": "办公协同系统",
-      "module": "文档审批",
-      "name": "审批文档",
-      "detail": "将演示文档标记为已审批"
-    },
-    {
-      "code": "hr:self:read",
-      "system": "人事信息系统",
-      "module": "个人信息",
-      "name": "查看个人信息",
-      "detail": "访问当前登录用户的基本信息"
-    }
-  ],
-  "roles": [
-    {
-      "id": "DEMO-role-admin",
-      "name": "演示管理员",
-      "description": "维护授权与用户角色，具有全部样例权限。",
-      "permissionCodes": [
-        "rbac:role:read",
-        "rbac:role:grant",
-        "rbac:permission:read",
-        "rbac:user:read",
-        "rbac:user:assign-role",
-        "oa:document:read",
-        "oa:document:create",
-        "oa:document:edit",
-        "oa:document:approve",
-        "hr:self:read"
-      ],
-      "version": 1
-    },
-    {
-      "id": "DEMO-role-clerk",
-      "name": "演示文档编辑员",
-      "description": "可查看、新建、编辑文档，不具有审批权限。",
-      "permissionCodes": [
-        "oa:document:read",
-        "oa:document:create",
-        "oa:document:edit",
-        "hr:self:read"
-      ],
-      "version": 1
-    },
-    {
-      "id": "DEMO-role-approver",
-      "name": "演示文档审批员",
-      "description": "可查看和审批文档，不具有编辑权限。",
-      "permissionCodes": [
-        "oa:document:read",
-        "oa:document:approve",
-        "hr:self:read"
-      ],
-      "version": 1
-    },
-    {
-      "id": "DEMO-role-employee",
-      "name": "演示普通员工",
-      "description": "可查看文档与本人基本信息。",
-      "permissionCodes": [
-        "oa:document:read",
-        "hr:self:read"
-      ],
-      "version": 1
-    }
-  ],
-  "users": [
-    {
-      "id": "DEMO-user-admin",
-      "name": "演示管理员",
-      "department": "演示信息中心",
-      "roleIds": [
-        "DEMO-role-admin"
-      ],
-      "version": 1
-    },
-    {
-      "id": "DEMO-user-employee",
-      "name": "演示普通员工",
-      "department": "演示工程一部",
-      "roleIds": [
-        "DEMO-role-employee"
-      ],
-      "version": 1
-    },
-    {
-      "id": "DEMO-user-clerk",
-      "name": "演示文档编辑员",
-      "department": "演示办公室",
-      "roleIds": [
-        "DEMO-role-clerk"
-      ],
-      "version": 1
-    },
-    {
-      "id": "DEMO-user-approver",
-      "name": "演示文档审批员",
-      "department": "演示工程二部",
-      "roleIds": [
-        "DEMO-role-approver"
-      ],
-      "version": 1
-    }
-  ],
-  "documents": [
-    {
-      "id": "DEMO-doc-001",
-      "title": "道路养护周报（演示）",
-      "department": "演示工程一部",
-      "status": "待审批"
-    },
-    {
-      "id": "DEMO-doc-002",
-      "title": "设施巡检记录（演示）",
-      "department": "演示工程二部",
-      "status": "草稿"
-    },
-    {
-      "id": "DEMO-doc-003",
-      "title": "施工会议纪要（演示）",
-      "department": "演示办公室",
-      "status": "已审批"
-    }
-  ],
-  "routes": [
-    {
-      "path": "/roles",
-      "title": "角色授权",
-      "icon": "◈",
-      "group": "management",
-      "requiredPermissions": [
-        "rbac:role:read",
-        "rbac:permission:read"
-      ],
-      "match": "all"
-    },
-    {
-      "path": "/permissions",
-      "title": "资源目录",
-      "icon": "▤",
-      "group": "management",
-      "requiredPermissions": [
-        "rbac:permission:read"
-      ]
-    },
-    {
-      "path": "/assignments",
-      "title": "用户角色分配",
-      "icon": "⇄",
-      "group": "management",
-      "requiredPermissions": [
-        "rbac:user:read",
-        "rbac:role:read"
-      ],
-      "match": "all"
-    },
-    {
-      "path": "/documents",
-      "title": "文档管理",
-      "icon": "▣",
-      "group": "business",
-      "requiredPermissions": [
-        "oa:document:read"
-      ]
-    },
-    {
-      "path": "/self",
-      "title": "个人信息",
-      "icon": "○",
-      "group": "business",
-      "requiredPermissions": [
-        "hr:self:read"
-      ]
-    }
-  ]
-}
-const copy = value => JSON.parse(JSON.stringify(value))
-const permissionCatalog = [...member3Fixtures.permissions]
-for (const role of roleOptions) {
-  for (const code of role.permissionCodes) {
-    if (!permissionCatalog.some(item => item.code === code)) permissionCatalog.push({ code, system: '权限管理系统', module: '其他功能', name: code, detail: '现有原型权限，名称待团队确认' })
+export class ApiError extends Error {
+  constructor(status, code, message, details) {
+    super(message)
+    Object.assign(this, { status, code, details })
   }
-  role.description ||= role.name
-  role.version = 1
 }
-roleOptions.push(...copy(member3Fixtures.roles.filter(role => role.id !== 'DEMO-role-admin')))
-const adminRole = roleOptions.find(role => role.id === 'role-admin')
-adminRole.permissionCodes = [...new Set([...adminRole.permissionCodes, ...member3Fixtures.permissions.map(item => item.code)])]
-const sampleDepartments = ['dept-road-tech', 'dept-01', 'dept-water-ops']
-member3Fixtures.users.filter(user => user.id !== 'DEMO-user-admin').forEach((sample, index) => {
-  const department = departmentOptions.find(item => item.id === sampleDepartments[index])
-  users.push({ ...copy(sample), employeeNo: 'DEMO00' + (index + 1), phone: '1390000000' + (index + 1), branch: department.branch, departmentId: department.id, departmentName: department.name, position: '演示岗位', status: 'active', accountType: 'employee', roles: [], permissionCodes: [] })
-})
-const documents = copy(member3Fixtures.documents)
-export const member3UserIdMap = { 'DEMO-user-admin': 'user-001', 'DEMO-user-employee': 'DEMO-user-employee', 'DEMO-user-clerk': 'DEMO-user-clerk', 'DEMO-user-approver': 'DEMO-user-approver' }
-function refreshUserPermissions(user) {
-  const assigned = roleOptions.filter(role => user.roleIds.includes(role.id))
-  user.roles = assigned.map(role => role.name)
-  user.permissionCodes = [...new Set(assigned.flatMap(role => role.permissionCodes))].sort()
-}
+const fail = (status, code, message, details) => { throw new ApiError(status, code, message, details) }
 
-// 演示密码仅保存在本次页面运行内存中，不存入用户列表或浏览器存储。
-const passwords = new Map(users.map(user => [user.id, '123456']))
-let currentUser = null
-const publicUser = user => ({ ...user, roleIds: [...user.roleIds], roles: [...user.roles], permissionCodes: [...user.permissionCodes] })
-function inScope(user) { return currentUser?.roleIds.includes('role-admin') || user.departmentId === currentUser?.departmentId }
-function requirePermission(code) {
-  if (!currentUser || currentUser.status !== 'active') throw new Error('请重新登录')
-  if (!currentUser.permissionCodes.includes(code)) throw new Error('没有执行此操作的权限')
-}
-users.forEach(user => {
-  user.roleIds = user.roleIds || (user.accountType === 'super-admin' ? ['role-admin'] : user.accountType === 'department-admin' ? ['role-department-admin'] : user.accountType === 'temporary-ops' ? ['role-ops-reader'] : user.id === 'user-003' ? ['role-finance-reader'] : ['role-employee'])
-  if (user.id === 'user-002') user.roleIds.push('role-employee')
-  user.accountType = user.accountType === 'temporary-ops' ? 'temporary-ops' : 'employee'
-  if (user.id === 'user-001') user.position = '信息技术专员'
-  if (user.id === 'user-002') user.position = '人事专员'
-  if (user.id === 'user-005') user.position = '运维工程师'
-  const roles = roleOptions.filter(role => user.roleIds.includes(role.id))
-  user.roles = roles.map(role => role.name)
-  user.permissionCodes = [...new Set(roles.flatMap(role => role.permissionCodes))]
-  if (user.departmentId === 'dept-02') user.departmentName = '人力资源部'
-  if (user.id === 'user-005') { user.departmentId = 'dept-road-tech'; user.branch = '道路工程分公司' }
-})
+const copy = value => JSON.parse(JSON.stringify(value))
+const inBrowser = typeof window !== 'undefined'
 
 export function demoMode() {
-  return new URLSearchParams(window.location.search).get('demo') || 'normal'
+  return inBrowser ? new URLSearchParams(window.location.search).get('demo') || 'normal' : 'normal'
 }
-
-const wait = (value, ms = 350) => new Promise(resolve => setTimeout(() => resolve(value), ms))
-const demoResponse = async (value) => {
+const wait = (value, ms = 250) => new Promise(resolve => setTimeout(() => resolve(value), inBrowser ? ms : 0))
+// 列表接口支持成员 2 的 ?demo=loading|empty|error 状态模拟。
+async function listResponse(value) {
   const mode = demoMode()
-  if (mode === 'error') { await wait(null, 350); throw new Error('演示请求失败') }
+  if (mode === 'error') { await wait(null); fail(500, 'DEMO_ERROR', '演示请求失败') }
   if (mode === 'loading') return wait(value, 1800)
-  if (mode === 'empty') return wait(Array.isArray(value) ? [] : { items: [], total: 0 })
+  if (mode === 'empty') return wait(Array.isArray(value) ? [] : { ...value, items: [], total: 0 })
   return wait(value)
 }
+
+// ---------- 内存数据 ----------
+const db = {
+  departments: copy(departmentRows),
+  users: createUsers(),
+  roles: roleRows.map(([id, code, name, kind, builtin, description]) => ({
+    id, code, name, kind, builtin, description, enabled: true, permissionVersion: 1, grants: copy(roleGrants[id] || [])
+  }))
+}
+const passwords = new Map(db.users.map(user => [user.id, DEMO_PASSWORD]))
+let sessionUserId = null
+let nextUserNo = db.users.length + 1
+let nextRoleNo = db.roles.length + 1
+
+const departmentById = id => db.departments.find(item => item.id === id)
+const userById = id => db.users.find(item => item.id === id)
+const roleById = id => db.roles.find(item => item.id === id)
+const SUPER_ADMIN = 'R01'
+
+// 目标部门是否为基准部门本身或其下级（DEPT 范围）。
+export function isWithinDepartment(targetId, baseId) {
+  for (let node = departmentById(targetId); node; node = departmentById(node.parentId)) {
+    if (node.id === baseId) return true
+  }
+  return false
+}
+function departmentPath(id) {
+  const names = []
+  for (let node = departmentById(id); node; node = departmentById(node.parentId)) names.unshift(node.name)
+  return names.join(' / ')
+}
+
+function publicUser(user) {
+  const roles = user.roleIds.map(roleById).filter(Boolean)
+  return {
+    id: user.id, username: user.username, name: user.name, departmentId: user.departmentId,
+    departmentName: departmentById(user.departmentId)?.name || '', departmentPath: departmentPath(user.departmentId),
+    position: user.position, phone: user.phone, email: user.email, status: user.status,
+    mustChangePassword: user.mustChangePassword, roleIds: [...user.roleIds], roleVersion: user.roleVersion,
+    roleNames: roles.map(role => role.name)
+  }
+}
+
+// 有效权限 = 启用角色授权的并集，同码取最大范围；系统管理后台功能点再映射为 rbac:*（CAT-03）。
+export function computeGrants(user) {
+  const base = policy.effectiveGrants(user, db.roles)
+  const derived = new Map()
+  for (const grant of base) {
+    const { systemCode, resource, action } = parsePermissionCode(grant.code)
+    const mapped = systemCode === 'sys' ? adminMapping[resource]?.actions[action] : null
+    for (const code of mapped || []) {
+      const entry = derived.get(code) || { code, scope: null, sources: [], via: [] }
+      entry.scope = policy.widerScope(entry.scope, grant.scope)
+      entry.sources.push(...grant.sources)
+      entry.via.push(grant.code)
+      derived.set(code, entry)
+    }
+  }
+  return [...base, ...[...derived.values()].sort((a, b) => a.code.localeCompare(b.code))]
+}
+
+function scopesOf(grants) {
+  return Object.fromEntries(grants.map(grant => [grant.code, grant.scope]))
+}
+
+// ---------- 认证与鉴权：认证 → 权限码 → 数据范围 → 目标对象（AUTHZ-01） ----------
+function sessionUser({ allowPasswordChange = false } = {}) {
+  const user = userById(sessionUserId)
+  if (!user || user.status !== 'ENABLED') {
+    sessionUserId = null
+    fail(401, 'UNAUTHENTICATED', '登录已失效，请重新登录')
+  }
+  if (user.mustChangePassword && !allowPasswordChange) fail(403, 'PASSWORD_CHANGE_REQUIRED', '请先修改初始密码')
+  return user
+}
+
+function authorize(code) {
+  const user = sessionUser()
+  const grant = computeGrants(user).find(item => item.code === code)
+  if (!grant) fail(403, 'FORBIDDEN', '没有执行此操作的权限')
+  return { user, scope: grant.scope }
+}
+
+function covers(scope, actor, target) {
+  return policy.scopeCovers(scope,
+    { userId: actor.id, departmentId: actor.departmentId },
+    { ownerId: target.id, departmentId: target.departmentId },
+    isWithinDepartment)
+}
+
+function departmentAllowed(scope, actor, departmentId) {
+  return covers(scope, actor, { id: null, departmentId })
+}
+
+function paginate(rows, page = 1, pageSize = 10) {
+  const safeSize = Math.min(Math.max(Number(pageSize) || 10, 1), 100)
+  const safePage = Math.max(Number(page) || 1, 1)
+  return { items: rows.slice((safePage - 1) * safeSize, safePage * safeSize), total: rows.length, page: safePage, pageSize: safeSize }
+}
+
+const PHONE = /^1\d{10}$/
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+function checkContact({ phone, email }, userId) {
+  if (phone !== undefined && phone !== '') {
+    if (!PHONE.test(phone)) fail(400, 'VALIDATION', '手机号须为 11 位数字')
+    if (db.users.some(item => item.phone === phone && item.id !== userId)) fail(409, 'DUPLICATE_PHONE', '手机号已被其他账号使用')
+  }
+  if (email !== undefined && email !== '' && !EMAIL.test(email)) fail(400, 'VALIDATION', '邮箱格式不正确')
+}
+
+function protectAccount(actor, target, action) {
+  if (target.id === actor.id) fail(409, 'PROTECTED_ACCOUNT', `不能${action}自己的账号`)
+  if (target.roleIds.includes(SUPER_ADMIN)) fail(409, 'PROTECTED_ACCOUNT', `唯一的超级管理员账号不能被${action}`)
+}
+
+function userInScope(code, id) {
+  const { user: actor, scope } = authorize(code)
+  const target = userById(id)
+  // 范围外与不存在返回同样的结果，不泄露目标是否存在（AUTHZ-03）。
+  if (!target || !covers(scope, actor, target)) fail(403, 'OUT_OF_SCOPE', '目标不在你的管理范围内')
+  return { actor, target, scope }
+}
+
+// ---------- 对外接口 ----------
 export const api = {
+  // 登录与会话（LOGIN-01 ~ 05）
   async login(account, password) {
     await wait(null)
-    const user = users.find(item => item.employeeNo === account.trim() || item.phone === account.trim())
-    if (!user || passwords.get(user.id) !== password) throw new Error('员工号或手机号不存在，或密码错误')
-    if (user.status !== 'active') throw new Error('账号已停用，请联系管理员')
-    if (!user.roleIds.some(id => ['role-admin', 'role-department-admin'].includes(id))) throw new Error('当前账号无权限管理系统登录资格，请使用对应业务系统')
-    currentUser = user
+    const key = String(account || '').trim()
+    const user = key && db.users.find(item => item.username === key || (item.phone && item.phone === key))
+    if (!user || passwords.get(user.id) !== password || user.status !== 'ENABLED') {
+      fail(401, 'BAD_CREDENTIALS', '用户名或密码错误')
+    }
+    sessionUserId = user.id
+    return this.me()
+  },
+  // 仅原型：刷新页面后按会话中记住的账号恢复，或切换演示身份（无需密码）。正式系统由后端会话完成。
+  async resumeDemoSession(userId) {
+    const user = userById(userId)
+    if (!user || user.status !== 'ENABLED') fail(401, 'UNAUTHENTICATED', '登录已失效，请重新登录')
+    sessionUserId = user.id
+    return this.me()
+  },
+  async switchDemoIdentity(username) {
+    const user = db.users.find(item => item.username === username)
+    if (!user || user.status !== 'ENABLED') fail(401, 'BAD_CREDENTIALS', '用户名或密码错误')
+    sessionUserId = user.id
+    return this.me()
+  },
+  logout() { sessionUserId = null },
+  async me() {
+    const user = sessionUser({ allowPasswordChange: true })
+    const grants = user.mustChangePassword ? [] : computeGrants(user)
+    return copy({
+      user: publicUser(user),
+      roles: user.roleIds.map(roleById).filter(Boolean).map(role => ({ id: role.id, name: role.name, enabled: role.enabled })),
+      grants, permissions: grants.map(grant => grant.code), scopes: scopesOf(grants)
+    })
+  },
+  async changePassword(oldPassword, newPassword) {
+    const user = sessionUser({ allowPasswordChange: true })
+    await wait(null)
+    if (passwords.get(user.id) !== oldPassword) fail(400, 'BAD_OLD_PASSWORD', '原密码不正确')
+    if (typeof newPassword !== 'string' || newPassword.length < 8 || newPassword.length > 64) fail(400, 'VALIDATION', '新密码须为 8–64 位')
+    if (newPassword === oldPassword) fail(400, 'VALIDATION', '新密码不能与原密码相同')
+    passwords.set(user.id, newPassword)
+    user.mustChangePassword = false
+    return this.me()
+  },
+
+  // 员工台账：真实业务（PORTAL-04 ~ 06、UC-08）
+  async listEmployees({ keyword = '', page = 1, pageSize = 10 } = {}) {
+    const { user: actor, scope } = authorize('hr:f046:read')
+    const editGrant = computeGrants(actor).find(item => item.code === 'hr:f046:edit')
+    const text = keyword.trim()
+    const rows = db.users
+      .filter(user => covers(scope, actor, user))
+      .filter(user => !text || `${user.username}${user.name}${user.position}`.includes(text))
+      .map(user => ({
+        id: user.id, username: user.username, name: user.name, departmentName: departmentById(user.departmentId)?.name,
+        departmentPath: departmentPath(user.departmentId), position: user.position, phone: user.phone, email: user.email,
+        editable: Boolean(editGrant && covers(editGrant.scope, actor, user))
+      }))
+    return listResponse({ ...paginate(rows, page, pageSize), readScope: scope, editScope: editGrant?.scope || null })
+  },
+  async updateEmployeeContact(id, payload) {
+    const allowed = ['phone', 'email']
+    const extra = Object.keys(payload || {}).filter(key => !allowed.includes(key))
+    const { user: actor, scope } = authorize('hr:f046:edit')
+    if (extra.length) fail(400, 'FIELD_NOT_EDITABLE', `只能修改电话和邮箱，不能修改：${extra.join('、')}`)
+    const target = userById(id)
+    if (!target || !covers(scope, actor, target)) fail(403, 'OUT_OF_SCOPE', `目标不在编辑范围（${scopeLabel(scope)}）内，已拒绝`)
+    checkContact(payload, target.id)
+    await wait(null)
+    Object.assign(target, { phone: payload.phone ?? target.phone, email: payload.email ?? target.email })
+    return { id: target.id, phone: target.phone, email: target.email }
+  },
+
+  // 管理概览（成员 2 的工作台）
+  async getOverview() {
+    const { user: actor, scope } = authorize('rbac:user:read')
+    const visible = db.users.filter(user => covers(scope, actor, user))
+    return listResponse({
+      scope, totalUsers: visible.length,
+      disabledUsers: visible.filter(user => user.status !== 'ENABLED').length,
+      pendingPassword: visible.filter(user => user.mustChangePassword).length,
+      totalRoles: db.roles.length
+    })
+  },
+
+  // 用户管理（USER-01 ~ 07、GRANT-01、GRANT-03）
+  async listUsers({ departmentId = '', keyword = '', roleId = '', status = '', page = 1, pageSize = 10 } = {}) {
+    const { user: actor, scope } = authorize('rbac:user:read')
+    const text = keyword.trim()
+    const rows = db.users
+      .filter(user => covers(scope, actor, user))
+      .filter(user => !departmentId || isWithinDepartment(user.departmentId, departmentId))
+      .filter(user => !text || user.username.includes(text) || user.name.includes(text))
+      .filter(user => !roleId || user.roleIds.includes(roleId))
+      .filter(user => !status || user.status === status)
+      .map(publicUser)
+    return listResponse({ ...paginate(rows, page, pageSize), scope })
+  },
+  async getUser(id) {
+    const { target } = userInScope('rbac:user:read', id)
+    return wait({ ...publicUser(target), permissionCount: computeGrants(target).length })
+  },
+  async createUser(payload) {
+    const { user: actor, scope } = authorize('rbac:user:create')
+    const username = String(payload.username || '').trim()
+    if (!/^[A-Za-z0-9_]{2,32}$/.test(username)) fail(400, 'VALIDATION', '工号须为 2–32 位字母、数字或下划线')
+    if (!String(payload.name || '').trim()) fail(400, 'VALIDATION', '请输入姓名')
+    if (!departmentById(payload.departmentId)) fail(400, 'VALIDATION', '请选择部门')
+    if (!departmentAllowed(scope, actor, payload.departmentId)) fail(403, 'OUT_OF_SCOPE', '只能在管理范围内的部门新增用户')
+    if (db.users.some(user => user.username === username)) fail(409, 'DUPLICATE_USERNAME', '工号已存在')
+    checkContact(payload)
+    await wait(null)
+    const user = {
+      id: 'u' + String(nextUserNo++).padStart(4, '0'), username, name: payload.name.trim(), departmentId: payload.departmentId,
+      position: payload.position || '', phone: payload.phone || '', email: payload.email || '',
+      status: 'ENABLED', mustChangePassword: true, roleIds: [], roleVersion: 1
+    }
+    db.users.push(user)
+    passwords.set(user.id, DEMO_PASSWORD)
     return publicUser(user)
   },
-  logout() { currentUser = null },
-  async getOverview() { requirePermission('rbac:user:read'); const visible = users.filter(inScope); return demoResponse({ totalUsers: visible.length, temporaryUsers: visible.filter(user => user.accountType === 'temporary-ops').length, totalRoles: currentUser.roleIds.includes('role-admin') ? roleOptions.length : new Set(visible.flatMap(user => user.roleIds)).size }) },
-  async listUsers() { requirePermission('rbac:user:read'); const visible = users.filter(inScope); return demoResponse({ items: visible.map(publicUser), total: visible.length }) },
-  async createUser(payload) {
-    requirePermission('rbac:user:create')
-    if (!inScope(payload)) throw new Error('只能创建本部门账号')
-    if (typeof payload.initialPassword !== 'string' || payload.initialPassword.length < 6 || payload.initialPassword.length > 64) throw new Error('初始密码须为 6–64 位')
-    if (payload.roleIds?.includes('role-admin')) throw new Error('系统只保留一个超级管理员账号，不能新增或授予此角色')
-    if (!['employee', 'temporary-ops'].includes(payload.accountType)) throw new Error('请选择员工账号或临时运维账号')
-    if (users.some(item => item.employeeNo === payload.employeeNo)) throw new Error('员工号已存在，请使用唯一员工号')
-    if (users.some(item => item.phone === payload.phone)) throw new Error('手机号已存在，请使用唯一手机号')
-    if (!Array.isArray(payload.roleIds) || payload.roleIds.some(id => !roleOptions.some(role => role.id === id))) throw new Error('请选择有效角色')
-    const roleIds = [...new Set(payload.roleIds)]
-    const assignedRoles = roleOptions.filter(role => roleIds.includes(role.id))
-    const { initialPassword, ...fields } = payload
-    const created = { ...fields, status: fields.status || 'active', roleIds, id: `user-${String(users.length + 1).padStart(3, '0')}`, roles: assignedRoles.map(role => role.name), permissionCodes: [...new Set(assignedRoles.flatMap(role => role.permissionCodes))].sort() }
-    const response = await demoResponse({ ...created })
-    users.push(created)
-    passwords.set(created.id, initialPassword)
-    return response
+  async updateUser(id, payload) {
+    const { actor, target, scope } = userInScope('rbac:user:update', id)
+    if (!String(payload.name || '').trim()) fail(400, 'VALIDATION', '请输入姓名')
+    if (!departmentById(payload.departmentId)) fail(400, 'VALIDATION', '请选择部门')
+    if (!departmentAllowed(scope, actor, payload.departmentId)) fail(403, 'OUT_OF_SCOPE', '不能把用户调到管理范围之外的部门')
+    checkContact(payload, target.id)
+    await wait(null)
+    Object.assign(target, { name: payload.name.trim(), departmentId: payload.departmentId, position: payload.position || '', phone: payload.phone || '', email: payload.email || '' })
+    return publicUser(target)
   },
-  async updateUserStatus(id, status) {
-    requirePermission('rbac:user:update')
-    const user = users.find(item => item.id === id)
-    if (!user) throw new Error('用户不存在')
-    if (user.roleIds.includes('role-admin')) throw new Error('唯一超级管理员账号不能停用')
-    if (!inScope(user)) throw new Error('不能修改其他部门账号')
-    if (user.id === currentUser.id) throw new Error('不能停用当前登录账号')
-    const response = await demoResponse({ ...user, status })
-    user.status = status
-    return response
+  async setUserStatus(id, status) {
+    const { actor, target } = userInScope('rbac:user:update', id)
+    if (!['ENABLED', 'DISABLED'].includes(status)) fail(400, 'VALIDATION', '状态无效')
+    protectAccount(actor, target, status === 'DISABLED' ? '停用' : '启用')
+    await wait(null)
+    target.status = status
+    return publicUser(target)
   },
-  async updateUserRoles(id, roleIds) {
-    requirePermission('rbac:user:assign-role')
-    const user = users.find(item => item.id === id)
-    if (!user) throw new Error('用户不存在')
-    if (user.roleIds.includes('role-admin')) throw new Error('超级管理员角色不可修改')
-    if (user.id === currentUser.id) throw new Error('不能修改当前登录账号的角色')
-    if (!inScope(user)) throw new Error('不能修改其他部门账号')
-    if (!Array.isArray(roleIds) || roleIds.some(roleId => !roleOptions.some(role => role.id === roleId) || roleId === 'role-admin')) throw new Error('请选择有效角色')
-    const nextRoleIds = [...new Set(roleIds)]
-    const assignedRoles = roleOptions.filter(role => nextRoleIds.includes(role.id))
-    const updated = { roleIds: nextRoleIds, roles: assignedRoles.map(role => role.name), permissionCodes: [...new Set(assignedRoles.flatMap(role => role.permissionCodes))].sort() }
-    const response = await demoResponse({ ...publicUser(user), ...updated })
-    Object.assign(user, updated)
-    return response
+  async resetPassword(id) {
+    const { actor, target } = userInScope('rbac:user:update', id)
+    protectAccount(actor, target, '重置密码')
+    await wait(null)
+    passwords.set(target.id, DEMO_PASSWORD)
+    target.mustChangePassword = true
+    return publicUser(target)
   },
-  async getCurrentUser() {
-    if (!currentUser || currentUser.status !== 'active') throw new Error('请重新登录')
-    refreshUserPermissions(currentUser)
-    return demoResponse(publicUser(currentUser))
+  async deleteUser(id) {
+    const { actor, target } = userInScope('rbac:user:delete', id)
+    protectAccount(actor, target, '删除')
+    await wait(null)
+    db.users.splice(db.users.indexOf(target), 1)
+    passwords.delete(target.id)
+    db.departments.forEach(dept => { if (dept.managerId === target.id) dept.managerId = null })
+    return { id }
   },
-  async listRoles() { requirePermission('rbac:role:read'); return demoResponse(copy(roleOptions)) },
-  async listPermissions() { requirePermission('rbac:permission:read'); return demoResponse(copy(permissionCatalog)) },
-  async listDocuments() { requirePermission('oa:document:read'); return demoResponse(copy(documents)) },
-  async updateRolePermissions(id, permissionCodes, version) {
-    requirePermission('rbac:role:grant')
-    const role = roleOptions.find(item => item.id === id)
-    if (!role) throw new Error('角色不存在')
-    if (id === 'role-admin') throw new Error('内置超级管理员角色不可修改')
-    if (!Array.isArray(permissionCodes) || permissionCodes.some(code => !permissionCatalog.some(item => item.code === code))) throw new Error('请选择有效权限')
-    if (demoMode() === 'conflict' || (version !== undefined && role.version !== version)) throw new Error('版本冲突，请重新加载角色')
-    const updated = { ...role, permissionCodes: [...new Set(permissionCodes)].sort(), version: role.version + 1 }
-    const response = await demoResponse(copy(updated))
-    if (role.version !== updated.version - 1) throw new Error('版本冲突，请重新加载角色')
-    Object.assign(role, updated)
-    users.forEach(refreshUserPermissions)
-    return response
+  // 整组替换并带版本号；版本不符返回 409，不做部分写入（GRANT-01）。
+  async assignRoles(id, roleIds, version) {
+    const { actor, target } = userInScope('rbac:user:assign-role', id)
+    protectAccount(actor, target, '修改角色')
+    if (!Array.isArray(roleIds) || roleIds.some(roleId => !roleById(roleId))) fail(400, 'VALIDATION', '请选择有效角色')
+    // 重复元素不静默去重，按 API 草案返回 400（测试用例 API-013）。
+    if (new Set(roleIds).size !== roleIds.length) fail(400, 'VALIDATION', '角色集合中有重复项')
+    const next = [...roleIds]
+    if (next.includes(SUPER_ADMIN)) fail(403, 'FORBIDDEN', '超级管理员角色不能授给其他账号')
+    const changed = [...next.filter(roleId => !target.roleIds.includes(roleId)), ...target.roleIds.filter(roleId => !next.includes(roleId))]
+    const actorIsSuper = actor.roleIds.includes(SUPER_ADMIN) && roleById(SUPER_ADMIN).enabled
+    const adminChange = changed.map(roleById).find(role => role.kind === 'admin')
+    if (!actorIsSuper && adminChange) fail(403, 'FORBIDDEN', `部门管理员只能分配或撤销业务角色，不能变更“${adminChange.name}”`)
+    if (version !== target.roleVersion) fail(409, 'VERSION_CONFLICT', '该用户的角色已被其他管理员修改，请刷新后重试', { currentVersion: target.roleVersion })
+    await wait(null)
+    target.roleIds = next
+    target.roleVersion += 1
+    return publicUser(target)
   },
-  async listDepartments() { requirePermission('rbac:department:read'); return demoResponse(currentUser.roleIds.includes('role-admin') ? departments : departmentOptions.filter(item => item.id === currentUser.departmentId)) },
-  roleOptions: roleOptions.filter(role => role.id !== 'role-admin'),
-  departmentOptions
+
+  // 组织架构（DEPT-01 ~ 02，只读）
+  async listDepartments() {
+    const { user: actor, scope } = authorize('rbac:department:read')
+    const count = id => db.users.filter(user => user.departmentId === id).length
+    const build = node => {
+      const children = db.departments.filter(item => item.parentId === node.id).map(build)
+      return {
+        id: node.id, name: node.name, type: node.type, typeLabel: departmentTypes[node.type],
+        parentName: departmentById(node.parentId)?.name || '', path: departmentPath(node.id),
+        managerName: userById(node.managerId)?.name || '', managerUsername: userById(node.managerId)?.username || '',
+        employeeCount: count(node.id), totalCount: children.reduce((sum, child) => sum + child.totalCount, count(node.id)), children
+      }
+    }
+    const roots = scope === 'ALL'
+      ? db.departments.filter(item => !item.parentId)
+      : scope === 'DEPT' ? [departmentById(actor.departmentId)] : []
+    return listResponse(roots.map(build))
+  },
+  async listDepartmentMembers(departmentId) {
+    const { user: actor, scope } = authorize('rbac:department:read')
+    if (!departmentById(departmentId) || !departmentAllowed(scope, actor, departmentId)) fail(403, 'OUT_OF_SCOPE', '该部门不在你的查看范围内')
+    return wait(db.users.filter(user => isWithinDepartment(user.departmentId, departmentId)).map(user => {
+      const { id, username, name, departmentName, position, status } = publicUser(user)
+      return { id, username, name, departmentName, position, status }
+    }))
+  },
+  // 下拉选项：部门列表（按指定权限码的范围过滤），供用户表单使用。
+  async departmentOptions(code = 'rbac:user:read') {
+    const { user: actor, scope } = authorize(code)
+    return db.departments.filter(dept => departmentAllowed(scope, actor, dept.id))
+      .map(dept => ({ id: dept.id, name: dept.name, path: departmentPath(dept.id), type: dept.type }))
+  },
+
+  // 角色管理（ROLE-01 ~ 04）
+  async listRoles() {
+    authorize('rbac:role:read')
+    return listResponse(db.roles.map(role => ({
+      id: role.id, code: role.code, name: role.name, kind: role.kind, builtin: role.builtin, description: role.description,
+      enabled: role.enabled, permissionVersion: role.permissionVersion, grantCount: role.grants.length,
+      userCount: db.users.filter(user => user.roleIds.includes(role.id)).length
+    })))
+  },
+  async createRole({ code, name, description = '' }) {
+    authorize('rbac:role:create')
+    const roleCode = String(code || '').trim().toUpperCase()
+    if (!/^[A-Z][A-Z0-9_]{1,31}$/.test(roleCode)) fail(400, 'VALIDATION', '角色编码须为大写字母开头的 2–32 位字母、数字或下划线')
+    if (!String(name || '').trim()) fail(400, 'VALIDATION', '请输入角色名称')
+    if (db.roles.some(role => role.code === roleCode)) fail(409, 'DUPLICATE_ROLE_CODE', '角色编码已存在')
+    await wait(null)
+    const role = { id: 'R' + String(nextRoleNo++).padStart(2, '0'), code: roleCode, name: name.trim(), kind: 'business', builtin: false, description, enabled: true, permissionVersion: 1, grants: [] }
+    db.roles.push(role)
+    return copy(role)
+  },
+  async updateRole(id, { name, description = '' }) {
+    authorize('rbac:role:update')
+    const role = roleById(id) || fail(404, 'NOT_FOUND', '角色不存在')
+    if (!String(name || '').trim()) fail(400, 'VALIDATION', '请输入角色名称')
+    await wait(null)
+    Object.assign(role, { name: name.trim(), description })
+    return copy(role)
+  },
+  async setRoleEnabled(id, enabled) {
+    authorize('rbac:role:update')
+    const role = roleById(id) || fail(404, 'NOT_FOUND', '角色不存在')
+    if (role.id === SUPER_ADMIN && !enabled) fail(409, 'PROTECTED_ROLE', '超级管理员角色不能停用')
+    await wait(null)
+    role.enabled = Boolean(enabled)
+    return copy(role)
+  },
+  async deleteRole(id, { confirmed = false } = {}) {
+    authorize('rbac:role:delete')
+    const role = roleById(id) || fail(404, 'NOT_FOUND', '角色不存在')
+    if (role.builtin) fail(409, 'PROTECTED_ROLE', '内置角色不能删除')
+    const holders = db.users.filter(user => user.roleIds.includes(id))
+    if (holders.length && !confirmed) fail(409, 'ROLE_HAS_USERS', `该角色下还有 ${holders.length} 个用户`, { userCount: holders.length })
+    await wait(null)
+    holders.forEach(user => { user.roleIds = user.roleIds.filter(roleId => roleId !== id); user.roleVersion += 1 })
+    db.roles.splice(db.roles.indexOf(role), 1)
+    return { id }
+  },
+  async listRoleUsers(id) {
+    authorize('rbac:role:read')
+    if (!roleById(id)) fail(404, 'NOT_FOUND', '角色不存在')
+    return wait(db.users.filter(user => user.roleIds.includes(id)).map(user => {
+      const { username, name, departmentName, position, status } = publicUser(user)
+      return { id: user.id, username, name, departmentName, position, status }
+    }))
+  },
+
+  // 角色授权（GRANT-02）：整组替换并带版本号，要么全部成功，要么全部不变。
+  async getRoleGrants(id) {
+    authorize('rbac:role:read'); authorize('rbac:permission:read')
+    const role = roleById(id) || fail(404, 'NOT_FOUND', '角色不存在')
+    return wait({ roleId: role.id, version: role.permissionVersion, grants: copy(role.grants), readOnly: role.id === SUPER_ADMIN })
+  },
+  async saveRoleGrants(id, grants, version, { simulateFailure = false } = {}) {
+    authorize('rbac:role:grant')
+    const role = roleById(id) || fail(404, 'NOT_FOUND', '角色不存在')
+    if (role.id === SUPER_ADMIN) fail(409, 'PROTECTED_ROLE', '超级管理员角色的授权不能修改')
+    const known = new Set(catalogPermissions.map(item => item.code))
+    const byCode = new Map()
+    for (const grant of grants || []) {
+      if (!known.has(grant.code)) fail(400, 'UNKNOWN_PERMISSION', `未知的权限码：${grant.code}`)
+      if (!['ALL', 'DEPT', 'SELF'].includes(grant.scope)) fail(400, 'VALIDATION', `数据范围无效：${grant.code}`)
+      byCode.set(grant.code, grant.scope)
+    }
+    for (const code of byCode.keys()) {
+      const { systemCode, resource } = parsePermissionCode(code)
+      if (!byCode.has(`${systemCode}:${resource}:read`)) fail(400, 'READ_REQUIRED', `${code} 缺少同一功能点的“查看”权限`)
+    }
+    if (version !== role.permissionVersion) fail(409, 'VERSION_CONFLICT', '该角色的授权已被其他管理员修改，请刷新后重试', { currentVersion: role.permissionVersion })
+    await wait(null, 400)
+    if (simulateFailure) fail(500, 'SAVE_FAILED', '模拟保存中途失败：事务已回滚，授权与保存前完全相同')
+    role.grants = [...byCode].map(([code, scope]) => ({ code, scope })).sort((a, b) => a.code.localeCompare(b.code))
+    role.permissionVersion += 1
+    return { roleId: role.id, version: role.permissionVersion, grants: copy(role.grants) }
+  },
+
+  // 资源目录（CAT-01，只读）
+  async listCatalog({ systemCode = '', module = '', keyword = '', page = 1, pageSize = 15 } = {}) {
+    authorize('rbac:permission:read')
+    const text = keyword.trim().toLowerCase()
+    const rows = functions
+      .filter(fn => !systemCode || fn.systemCode === systemCode)
+      .filter(fn => !module || fn.module === module)
+      .filter(fn => !text || `${fn.id}${fn.name}${fn.module}${fn.systemCode}:${fn.id}`.toLowerCase().includes(text))
+      .map(fn => ({ ...fn, codes: actions.map(action => `${fn.systemCode}:${fn.id}:${action.code}`), admin: adminMapping[fn.id] || null }))
+    return listResponse({ ...paginate(rows, page, pageSize), stats: { systems: systems.length, modules: modules.length, functions: functions.length, permissions: catalogPermissions.length } })
+  },
+
+  // 仅原型：模拟“另一位管理员已先保存”，用来演示 409 冲突。
+  demo: {
+    bumpUserRoleVersion(id) { const user = userById(id); if (user) user.roleVersion += 1 },
+    bumpRoleGrantVersion(id) { const role = roleById(id); if (role) role.permissionVersion += 1 },
+    identities: [
+      { username: 'admin', label: '超级管理员', note: '全部功能，管理全部组织' },
+      { username: 'SG000001', label: '公司领导', note: '门户按清单使用；管理后台只读' },
+      { username: 'SG000011', label: '部门经理', note: '综合办公室；查看全部，管理限本部门' },
+      { username: 'SG000281', label: '项目经理', note: '道路工程分公司第一项目经理部' },
+      { username: 'SG000013', label: '普通员工', note: '综合办公室；人力资源部分功能点限本人' },
+      { username: 'DEMO000100', label: '部门管理员', note: '道路工程分公司及下级部门的用户管理' },
+      { username: 'DEMO000101', label: '首次登录', note: '登录后必须先修改密码' },
+      { username: 'DEMO000103', label: '无角色账号', note: '可以登录，菜单为空' }
+    ]
+  }
 }
+
+export { functionById, departmentTypes }
