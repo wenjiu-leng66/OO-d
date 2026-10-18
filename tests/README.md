@@ -2,7 +2,7 @@
 
 当前没有业务测试。预留 unit、contract、integration、e2e、fixtures 目录。
 
-- unit：核心授权与纯计算等单元测试。
+- unit：核心授权与纯计算等单元测试。成员 1 的 Excel 导入脚本测试：`python tests/unit/test_import_excel.py`，只需 Python 3 标准库和合成数据，不需要原始 Excel 或数据库。
 - contract：同一外部契约对两种后端的检查。
 - integration：数据库、事务、真实身份与 API 链路。
 - e2e：浏览器中的完整用户操作。
