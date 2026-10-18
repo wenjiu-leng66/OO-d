@@ -251,3 +251,115 @@ test('停用账号后，已登录的会话下一次请求返回 401（USER-04）
   await as('admin');
   await api.setUserStatus(staff.user.id, 'ENABLED');
 });
+
+test('目录接受完整权限码检索，包含操作名并忽略大小写（CAT-01）', async () => {
+  await as('admin');
+  const result = await api.listCatalog({ keyword: 'HR:f046:EDIT' });
+  assert.equal(result.total, 1);
+  assert.equal(result.items[0].id, 'f046');
+  assert.ok(result.items[0].codes.includes('hr:f046:edit'));
+  assert.equal((await api.listCatalog({ keyword: 'hr:f046:unknown' })).total, 0);
+});
+
+test('同一版本并发保存角色授权，只成功一次，另一请求409且不覆盖结果（GRANT-02）', async () => {
+  await as('admin');
+  const role = await api.createRole({ code: 'CONCURRENT_GRANTS', name: '并发授权合成检查' });
+  const left = [{ code: 'hr:f046:read', scope: 'SELF' }];
+  const right = [{ code: 'oa:f001:read', scope: 'DEPT' }];
+  try {
+    const results = await Promise.allSettled([
+      api.saveRoleGrants(role.id, left, 1), api.saveRoleGrants(role.id, right, 1)
+    ]);
+    assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+    const failure = results.find(result => result.status === 'rejected').reason;
+    assert.equal(failure.status, 409);
+    assert.equal(failure.code, 'VERSION_CONFLICT');
+    const saved = await api.getRoleGrants(role.id);
+    assert.equal(saved.version, 2);
+    assert.deepEqual(saved.grants, results.find(result => result.status === 'fulfilled').value.grants);
+  } finally { await api.deleteRole(role.id); }
+});
+
+test('同一版本并发替换用户角色，只成功一次且用户版本仅加一（GRANT-01）', async () => {
+  await as('admin');
+  const before = await api.getUser('u0004');
+  try {
+    const results = await Promise.allSettled([
+      api.assignRoles(before.id, ['R05'], before.roleVersion),
+      api.assignRoles(before.id, ['R05', 'R07'], before.roleVersion)
+    ]);
+    assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+    assert.equal(results.find(result => result.status === 'rejected').reason.code, 'VERSION_CONFLICT');
+    const after = await api.getUser(before.id);
+    assert.equal(after.roleVersion, before.roleVersion + 1);
+    assert.deepEqual(after.roleIds, results.find(result => result.status === 'fulfilled').value.roleIds);
+  } finally {
+    await api.assignRoles(before.id, before.roleIds, (await api.getUser(before.id)).roleVersion);
+  }
+});
+
+test('保存等待期间退出身份，不写入旧会话的授权或用户角色', async () => {
+  await as('admin');
+  const before = await api.getRoleGrants('R07');
+  const userBefore = await api.getUser('u0004');
+  const pending = Promise.all([
+    assert.rejects(api.saveRoleGrants('R07', [], before.version), { status: 401, code: 'UNAUTHENTICATED' }),
+    assert.rejects(api.assignRoles(userBefore.id, [], userBefore.roleVersion), { status: 401, code: 'UNAUTHENTICATED' })
+  ]);
+  api.logout();
+  await pending;
+  await as('admin');
+  assert.deepEqual(await api.getRoleGrants('R07'), before);
+  assert.deepEqual(await api.getUser(userBefore.id), userBefore);
+});
+
+test('多个目录权限映射到同一后台权限时，同一角色范围来源去重（PORTAL-03）', async () => {
+  const me = await as('admin');
+  const grant = me.grants.find(item => item.code === 'rbac:log:read');
+  assert.ok(grant.via.includes('sys:f348:read'));
+  assert.ok(grant.via.includes('sys:f349:read'));
+  assert.equal(new Set(grant.sources.map(source => `${source.roleId}:${source.scope}`)).size, grant.sources.length);
+  assert.equal(grant.sources.filter(source => source.roleId === 'R01').length, 1);
+});
+
+test('并发新建同编码角色仅创建一次，重复请求409（ROLE-01）', async () => {
+  await as('admin');
+  const results = await Promise.allSettled([
+    api.createRole({ code: 'CONCURRENT_ROLE', name: '合成角色一' }),
+    api.createRole({ code: 'CONCURRENT_ROLE', name: '合成角色二' })
+  ]);
+  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+  assert.equal(results.find(result => result.status === 'rejected').reason.code, 'DUPLICATE_ROLE_CODE');
+  const roles = (await api.listRoles()).filter(role => role.code === 'CONCURRENT_ROLE');
+  assert.equal(roles.length, 1);
+  await api.deleteRole(roles[0].id);
+});
+
+test('退出会话取消所有延迟中的角色维护，不创建/编辑/停用/删除角色', async () => {
+  await as('admin');
+  const role = await api.createRole({ code: 'CANCEL_ROLE', name: '原角色' });
+  const pending = Promise.all([
+    assert.rejects(api.createRole({ code: 'CANCEL_CREATE', name: '不应创建' }), { status: 401 }),
+    assert.rejects(api.updateRole(role.id, { name: '不应更新' }), { status: 401 }),
+    assert.rejects(api.setRoleEnabled(role.id, false), { status: 401 }),
+    assert.rejects(api.deleteRole(role.id), { status: 401 })
+  ]);
+  api.logout();
+  await pending;
+  await as('admin');
+  const roles = await api.listRoles();
+  assert.equal(roles.some(item => item.code === 'CANCEL_CREATE'), false);
+  assert.equal(roles.find(item => item.id === role.id).name, '原角色');
+  assert.equal(roles.find(item => item.id === role.id).enabled, true);
+  await api.deleteRole(role.id);
+});
+
+test('角色名称及说明超出契约长度时拒绝且不修改原值（ROLE-01）', async () => {
+  await as('admin');
+  await assert.rejects(api.createRole({ code: 'TOO_LONG', name: '长'.repeat(33) }), { status: 400 });
+  await assert.rejects(api.createRole({ code: 'TOO_LONG', name: '合成', description: '长'.repeat(256) }), { status: 400 });
+  const role = await api.createRole({ code: 'ROLE_LIMITS', name: '合成' });
+  await assert.rejects(api.updateRole(role.id, { name: '长'.repeat(33) }), { status: 400 });
+  assert.equal((await api.listRoles()).find(item => item.id === role.id).name, '合成');
+  await api.deleteRole(role.id);
+});

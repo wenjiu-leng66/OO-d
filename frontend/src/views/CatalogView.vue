@@ -1,6 +1,6 @@
 <script setup>
 // 资源目录（CAT-01 ~ 03，只读，由导入维护）：系统 > 模块 > 功能点 > 操作，关键词、系统、模块筛选和分页。
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { api } from '../api/mock'
 import { systems, modules, actions, adminMapping, adminPermissions } from '../api/fixtures/catalog'
 
@@ -8,17 +8,26 @@ const tab = ref('catalog')
 const loading = ref(false); const failed = ref(false)
 const systemCode = ref(''); const moduleName = ref(''); const keyword = ref(''); const page = ref(1); const size = 12
 const result = ref({ items: [], total: 0, stats: null })
+let requestVersion = 0
 const moduleOptions = computed(() => modules.filter(item => !systemCode.value || item.systemCode === systemCode.value))
 const mappingRows = computed(() => Object.entries(adminMapping).flatMap(([id, item]) =>
   Object.entries(item.actions).map(([action, codes]) => ({ id, action: actions.find(a => a.code === action).label, sysCode: `sys:${id}:${action}`, codes, page: item.page, stage: item.stage }))))
 async function load() {
+  const request = ++requestVersion
   loading.value = true; failed.value = false
-  try { result.value = await api.listCatalog({ systemCode: systemCode.value, module: moduleName.value, keyword: keyword.value, page: page.value, pageSize: size }) }
-  catch { failed.value = true } finally { loading.value = false }
+  try {
+    const data = await api.listCatalog({ systemCode: systemCode.value, module: moduleName.value, keyword: keyword.value, page: page.value, pageSize: size })
+    if (request === requestVersion) result.value = data
+  } catch {
+    if (request === requestVersion) failed.value = true
+  } finally {
+    if (request === requestVersion) loading.value = false
+  }
 }
 function search() { page.value = 1; load() }
-watch(systemCode, () => { moduleName.value = ''; search() })
-watch(moduleName, search)
+watch(systemCode, () => { moduleName.value = '' })
+watch([systemCode, moduleName], search)
+onBeforeUnmount(() => { requestVersion += 1 })
 onMounted(load)
 </script>
 
@@ -57,7 +66,7 @@ onMounted(load)
       </el-tab-pane>
       <el-tab-pane label="管理后台映射（CAT-03）" name="mapping">
         <el-card>
-          <el-alert class="block-gap" type="info" :closable="false" show-icon title="清单第 18 个系统“系统管理后台”中已实现的模块，授权映射为 rbac:* 权限；其余功能点做占位页。本表是原型提案，接口设计阶段写入契约。" />
+          <el-alert class="block-gap" type="info" :closable="false" show-icon title="清单第 18 个系统“系统管理后台”中已实现的模块，授权映射为 rbac:* 权限；其余功能点做占位页。映射已写入 API 约定；日志相关页面为阶段三静态原型。" />
           <el-table :data="mappingRows" size="small" stripe>
             <el-table-column label="清单权限码" min-width="150"><template #default="{ row }"><code>{{ row.sysCode }}</code></template></el-table-column>
             <el-table-column prop="action" label="操作" width="70" />
