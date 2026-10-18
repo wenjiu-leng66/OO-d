@@ -61,6 +61,7 @@ npm run build                           # frontend 目录
 
 ## 成员 3 的第一阶段交付
 
+- 当前Vue集成版的[页面检查记录与截图](../docs/testing/member3-stage1-acceptance.md)及[5—10分钟演示稿](../docs/demo/member3-stage1-demo.md)，包含角色、授权、门户与目录的本机实测和待部署复查边界。
 - [打开交互原型](prototypes/member3-rbac0.html)：角色授权、资源目录、用户角色分配、导航和按钮权限演示。下载仓库后双击 HTML 即可使用，不调用真实后端。
 - [原型操作说明](prototypes/README.md)：演示入口、状态模拟与范围。
 - [设计与成员衔接](../docs/design/member3-rbac0-design.md)：页面规则、权限码及后续阶段边界。
