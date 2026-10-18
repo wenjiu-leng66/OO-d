@@ -1,21 +1,18 @@
 # 环境与工具约定
 
-状态：版本待确认。本仓库未初始化应用，不提供虚构的运行命令。
+第一阶段集成运行方式以 [部署说明](../../deploy/README.md)、[后端说明](../../backend-procedural/README.md) 和 [前端说明](../../frontend/README.md) 为准。下面是当前代码约定；实际被测版本另外记录于 [验证记录](../stage1/verification-record.md)。
 
-| 项目 | 候选 / 约定 | 正式确认值 |
-| --- | --- | --- |
-| Git | 每人独立账号与提交身份 | 安装版本各自记录 |
-| Java | JDK 21 候选；匹配后端框架 | 待填写 |
-| Spring Boot / Security | 采用兼容的稳定版本 | 待填写 |
-| 数据访问 | Spring JDBC 或熟悉的 MyBatis，选一套 | 待填写 |
-| 前端 | Vue 3 候选或小组已有熟练框架 | 待填写 |
-| Node.js | 满足所选前端工具的版本要求 | 待填写 |
-| 包管理器 | npm 或 pnpm，选一套并提交锁文件 | 待填写 |
-| MySQL | 8.4 LTS 候选 | 待填写 |
-| 文档与仓库检查 | Python 3.11+；脚本只用标准库 | 已用于仓库检查 |
+| 组件 | 约定 |
+| --- | --- |
+| 后端 | JDK 21、Spring Boot 3.3.5、Spring JDBC、Maven |
+| 密码 | Spring Security PBKDF2 v5_8，写带前缀`{pbkdf2@SpringSecurity_v5_8}`；兼容旧带前缀哈希校验 |
+| 数据库 | MySQL 8.4；正式V001结构；H2仅用于独立开发/自动测试，不替代MySQL验收 |
+| 前端 | Vue 3、JavaScript、Element Plus、Vite；npm，提交锁文件 |
+| Node.js | 20.19+或22.12+；Docker构建版本以web.Dockerfile为准 |
+| 部署 | Linux、Docker Engine、Compose 2.20+、Nginx |
+| 文档/导入/HTTP脚本 | Python 3.11+，仅标准库脚本无需额外pip依赖 |
+| 浏览器 | 桌面版Chrome/Edge |
 
-IDEA 用于后端，VS Code 用于前端和文档。采用 Java / Vue 时不必增加 Visual Studio、独立 Tomcat、Redis 或 Kubernetes。
+前端开发端口5173、后端开发端口8080；Docker同源入口默认80，仅发布Web端口，MySQL和Java留在内部网络。生产HTTPS按部署说明配置，Cookie启用Secure。
 
-开发端口草案：前端 5173，面向功能后端 8080，OO 后端 8081，MySQL 3306。使用 UTF-8 和 LF；机器本地配置不提交。
-
-初始化后在各模块 README 补充准确的依赖安装、构建、启动与测试命令，提供配置示例。不能把“我的电脑能跑”当作环境说明。
+使用UTF-8；环境文件、真实输入资料、数据库数据和报告与源码分开。无需为一期引入Redis或Kubernetes。第二阶段面向对象后端使用独立等价数据库，不与面向功能后端随机混用会话。

@@ -1,64 +1,80 @@
 # RBAC Permission System
 
-“有请下一组”的 OOAD 课程设计：市政公司 RBAC 权限管理系统。
+“有请下一组”的 OOAD 课程设计：市政公司统一权限管理系统。
 
-当前阶段：**RBAC0 准备与界面设计**。已建立协作框架，成员 3 的角色权限交互原型及前端权限判断模块已准备。尚未初始化正式 Vue / Spring Boot 应用，尚无真实后端或业务数据联调。
+当前集成版汇总六位成员已有需求、数据库、Vue 界面原型、API 设计和面向功能 Java 后端，并补齐 RBAC0 所需接口、数据范围、首次改密、授权版本与保护规则。第一阶段按“**完整后端、完整界面原型、API 设计，上传服务器并可以运行**”检查；真实前后端联调不是本阶段的必要条件。
 
-## 从这里开始
+按用户最新要求，本轮只完善仓库并做本机验证，**不连接或操作用户服务器**。部署脚本已经准备，待用户自行部署；没有声称已经上线。实际测试、全量原始资料导入和后续部署状态见 [一期验证记录](docs/stage1/verification-record.md)。
 
-- 六位成员先阅读 [GitHub 使用手册](docs/guides/github-team-manual.md)。
-- 日常提交遵守 [贡献流程](CONTRIBUTING.md)。
-- 组长填写 [成员责任表](docs/planning/team.md)，按 [首次任务清单](docs/planning/first-tasks.md) 分配工作。
-- 开工前完成 [需求范围](docs/requirements/scope.md)、[待确认问题](docs/requirements/questions.md) 和 [接口约定](docs/standards/api-contract.md)。
-- 检查进度与完成标准：[阶段计划](docs/planning/milestones.md)、[验收矩阵](docs/testing/acceptance-matrix.md)。
-- 查看成员 3 的 [RBAC0 原型](frontend/prototypes/README.md) 与 [完成内容解释](docs/guides/member3-rbac0-explained.md)。
+## 先运行起来
 
-## 目录
+以下服务器步骤留供用户自行执行，本轮未连接或操作服务器。
 
-```text
-frontend/                 前端，一套界面连接两种后端实现
-backend-procedural/       面向功能/过程的后端
-backend-oo/               面向对象后端与适合的函数式计算
-api/                      OpenAPI 契约与接口变更记录
-database/                 数据库迁移、脱敏种子数据说明
-data/                     合成样例；原始数据目录被忽略
-docs/                     需求、UML、数据字典、计划、测试、手册
-tests/                    单元、契约、集成、端到端测试的预留位置
-deploy/                   部署说明与不含秘密的配置示例
-scripts/                  仓库结构、文档链接和文件检查
-.github/                  Issue、PR、模块责任和 CI 配置
+在有 Docker Compose 2.20+ 的 Linux 服务器上，进入仓库根目录：
+
+```bash
+cp deploy/.env.example deploy/.env
+# 编辑 deploy/.env，设置数据库密码、后端初始密码，合成验收使用 RBAC_DEMO_ENABLED=true
+sh scripts/deploy-stage1.sh
 ```
 
-Git 不跟踪空文件夹。源码目录中的 `.gitkeep` 只用于保留位置，正式添加源码后可删除对应占位文件。
+本地 Windows Docker Desktop 可复制并编辑同一环境文件，再执行：
 
-## 架构与课程阶段
+```powershell
+Copy-Item deploy/.env.example deploy/.env
+docker compose --env-file deploy/.env -f deploy/compose.yaml up -d --build --wait
+```
 
-前端经 HTTP/JSON 调用后端，后端完成身份、权限和业务校验后访问数据库。两套后端遵循同一 API 契约，核心授权逻辑分别实现，测试时使用等价的独立初始数据。
+不要提交 `deploy/.env`。新建数据库卷自动加载正式 V001 表结构；数据库端口不发布到公网。已有数据库的迁移、原始资料导入、备份与重启步骤见 [部署说明](deploy/README.md)。
 
-候选技术栈为 Vue 3、Java、Spring Boot、Spring Security 和 MySQL。精确版本、老师认可的范式边界以及能否复用基础设施尚需确认，见 [环境约定](docs/standards/environment.md)。当前没有通过文件名或目录宣称已实现这些技术。
+| 入口（默认本机） | 用途 |
+| --- | --- |
+| `http://localhost/` | 完整 Vue 界面原型，使用明确标注的模拟数据 |
+| `http://localhost/stage1/` | 真实后端检查入口与自测说明 |
+| `http://localhost/api-design/openapi.yaml` | 权威 OpenAPI 0.3.0 契约 |
+| `http://localhost/swagger-ui/index.html?url=/api-design/openapi.yaml` | 后端接口查看/调用入口 |
+| `http://localhost/api/v1/health` | 后端与数据库就绪检查 |
 
-| 课程阶段 | 验收窗口（暂按 2026 年） | 主交付 |
-| --- | --- | --- |
-| RBAC0 | 10/27—10/29 | 界面设计、数据库设计、面向功能基础后端 |
-| RBAC1 | 11/24—11/27 | 层级、两种后端、部分前端与比较验证 |
-| 约束与最终验收 | 12/22—12/24 | 两种约束实现、前端、部分函数式设计 |
+界面原型账号及模拟密码见 [原型说明](docs/design/stage1-ui-prototype.md)；真实后端使用环境配置 `RBAC_INITIAL_PASSWORD`。模拟身份切换不改变真实后端会话，原型刷新会重置内存数据。正式后端的数据写入 MySQL 持久卷。
 
-理论上的 RBAC2 增加约束，RBAC1 与 RBAC2 合并属于 RBAC3；最终以老师的课程口径命名，并解释理论关系。
+本地不使用 Docker 时，可分别按 [后端说明](backend-procedural/README.md) 和 [前端说明](frontend/README.md) 构建运行。
 
-## 本地检查
-
-已安装 Python 3.11 或以上时，在仓库根目录运行：
+## 检查前自测
 
 ```powershell
 python scripts/check_repository.py
-node --test tests/frontend/rbac0-policy.test.cjs
+python -m unittest discover -s tests/unit -p "test_*.py"
+node --test tests/frontend/*.test.cjs
+mvn -f backend-procedural/pom.xml clean verify
+npm --prefix frontend ci
+npm --prefix frontend run build
 git diff --check
+python scripts/smoke_http.py --base-url http://127.0.0.1 --env-file deploy/.env --check-web
 ```
 
-CI 检查目录、UTF-8、Markdown 本地文件链接、合成样例关联及不应提交的文件，并运行成员 3 的前端权限判断测试。它**不代表完整应用能运行、后端业务测试通过或已成功部署**。应用初始化后再增加前端构建与后端测试。
+最后一条需先启动合成验收环境；它调用真实 HTTP、建立 Cookie，会创建并清理临时合成测试数据。完整步骤、关键拒绝场景、MySQL 重启持久化及服务器外网检查见 [检查前自测](docs/stage1/self-test.md)。不要把模拟 API 测试或 H2 测试通过当作云服务器、全量 MySQL 数据或性能已通过。
+
+## 设计和交付材料
+
+| 材料 | 入口 |
+| --- | --- |
+| 一期交付标准、41 条覆盖和执行记录 | [一期检查入口](docs/stage1/README.md) |
+| 需求 | [需求规格](docs/requirements/req-spec.md) |
+| API | [OpenAPI](api/openapi.yaml)、[接口约定与rbac映射](docs/standards/api-contract.md) |
+| 数据库 | [数据字典](docs/database/data-dictionary.md)、[迁移与导入](database/README.md) |
+| 界面原型 | [页面、身份和交互](docs/design/stage1-ui-prototype.md) |
+| 成员成果整合 | [分支与SHA记账](docs/stage1/merge-sources.md) |
+| 部署与运行 | [服务器部署说明](deploy/README.md) |
+| 贡献与分工 | [GitHub手册](docs/guides/github-team-manual.md)、[贡献流程](CONTRIBUTING.md)、[责任表](docs/planning/team.md) |
+
+## 架构与目录
+
+`frontend/` 是 Vue 3 + Element Plus 的完整界面原型。`backend-procedural/` 是 JDK 21 + Spring Boot 3.3.5 的面向功能后端；统一 `/api/v1` JSON API、`JSESSIONID` 服务端会话，逐请求检查权限和 `ALL/DEPT/SELF` 数据范围。部署采用 Nginx、Java 后端与内部 MySQL 8.4；`api/`、`database/`、`docs/`、`scripts/` 分别存放契约、迁移导入、设计验收和检查脚本。
+
+`backend-oo/` 留待第二阶段实现。第二阶段增加继承和两后端比较，第三阶段增加约束、激活角色、审计与函数式模块；一期页面中的后续功能明确标为静态原型。[阶段计划](docs/planning/milestones.md) 中保留课程时间表。
 
 ## 数据与公开仓库
 
-当前仓库公开。原始员工表、电话、密码、数据库备份、云密钥和访问令牌不得提交。`data/samples/` 只有明确标注的合成数据；真实数据的获取与导入通过小组受控方式完成，见 [数据说明](data/README.md)。
+原始 Excel、真实员工姓名/电话、密码/哈希、数据库备份、云密钥和访问令牌不得提交。三份课程资料只放被忽略的 `data/raw/`，受控离线导入；仓库样例和演示账号均为合成。
 
-`.gitignore` 只影响尚未跟踪的文件，不能清除已经进入 Git 历史的秘密。发现泄露后先撤销或轮换凭证，再由组长处理历史。
+全量基准为111个组织、18个系统、115个模块、359个功能点、2154条清单权限、10000名员工加admin；原清单五角色3549条授权，平台部门管理员另六条。原始资料缺失时只能验证合成数据，不声称全量验收完成。`.gitignore` 不会清除已进入历史的资料，发现秘密泄露须先撤销或轮换凭证。

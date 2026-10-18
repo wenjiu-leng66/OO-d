@@ -1,1 +1,1 @@
-<template><el-result icon="warning" title="无权访问" sub-title="当前账号没有访问此页面的权限"><template #extra><el-button type="primary" @click="$router.push('/dashboard')">返回工作台</el-button></template></el-result></template>
+<template><el-result icon="warning" title="403 无权访问" :sub-title="`当前账号没有访问此页面的权限${$route.query.from ? '：' + $route.query.from : ''}。前端拦截只是展示，后端同样会拒绝（AUTHZ-01）。`"><template #extra><el-button type="primary" @click="$router.push('/portal')">返回门户首页</el-button><el-button @click="$router.push('/me/permissions')">查看我的权限</el-button></template></el-result></template>

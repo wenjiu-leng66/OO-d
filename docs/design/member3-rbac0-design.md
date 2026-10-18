@@ -20,7 +20,7 @@
 | 设计说明 | 本文件 | 页面、状态、边界、协作步骤和验收预期 |
 | API 使用方提案 | [member3-rbac0-consumer-needs.md](../../api/proposals/member3-rbac0-consumer-needs.md) | 提交给成员 4、6 统一约定的接口需求，不替代权威 OpenAPI |
 
-成员 2 继续负责 Vue/React 公共结构、登录、用户和部门页面。本次没有建立另一套前端项目，也没有替代成员 4 编写后端。正式接口仍以 [api/openapi.yaml](../../api/openapi.yaml) 为准；准备阶段该文件的 `paths` 为空。
+成员 2 继续负责 Vue/React 公共结构、登录、用户和部门页面。本次没有建立另一套前端项目，也没有替代成员 4 编写后端。正式接口仍以 [api/openapi.yaml](../../api/openapi.yaml) 为准；成员 3 交付本设计时该文件的 `paths` 为空，现已由成员 6 整理第一版 RBAC0 草案。
 
 ## 2. 先理解 RBAC0 的关系
 

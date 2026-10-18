@@ -1,0 +1,75 @@
+name: rbac-stage1
+
+services:
+  db:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-rbac}
+      MYSQL_USER: ${MYSQL_USER:-rbac}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in deploy/.env}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in deploy/.env}
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_0900_ai_ci"]
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ../database/migrations/V001__create_core_tables.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$${MYSQL_PASSWORD}\" mysql -h127.0.0.1 -u\"$${MYSQL_USER}\" \"$${MYSQL_DATABASE}\" -Nse 'SELECT 1' | grep -qx 1"]
+      interval: 10s
+      timeout: 5s
+      start_period: 40s
+      retries: 18
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+
+  backend:
+    build:
+      context: ..
+      dockerfile: deploy/backend.Dockerfile
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: mysql
+      SPRING_DATASOURCE_URL: jdbc:mysql://db:3306/${MYSQL_DATABASE:-rbac}?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai
+      SPRING_DATASOURCE_USERNAME: ${MYSQL_USER:-rbac}
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in deploy/.env}
+      RBAC_DEMO_ENABLED: ${RBAC_DEMO_ENABLED:-false}
+      RBAC_INITIAL_PASSWORD: ${RBAC_INITIAL_PASSWORD:-}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      SERVER_FORWARD_HEADERS_STRATEGY: framework
+      SPRINGDOC_SWAGGER_UI_URL: /api-design/openapi.yaml
+      TZ: Asia/Shanghai
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [internal]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    tmpfs: [/tmp]
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/web.Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${HTTP_BIND:-0.0.0.0}:${HTTP_PORT:-80}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks: [internal]
+    security_opt: [no-new-privileges:true]
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  mysql_data:

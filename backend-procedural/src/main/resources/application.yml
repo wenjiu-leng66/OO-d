@@ -1,0 +1,29 @@
+spring:
+  application:
+    name: rbac-procedural-backend
+  profiles:
+    default: h2
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+server:
+  forward-headers-strategy: framework
+  port: ${PORT:8080}
+  servlet:
+    session:
+      timeout: 30m
+      cookie:
+        http-only: true
+        same-site: lax
+        secure: ${SESSION_COOKIE_SECURE:false}
+  error:
+    include-message: never
+rbac:
+  demo-enabled: ${RBAC_DEMO_ENABLED:false}
+  initial-password: ${RBAC_INITIAL_PASSWORD:}
+  allowed-origins: ${RBAC_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173}
+
+
+springdoc:
+  swagger-ui:
+    query-config-enabled: true

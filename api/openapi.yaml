@@ -1,6 +1,2237 @@
-openapi: 3.0.3
+openapi: "3.0.3"
 info:
-  title: RBAC Permission System API
-  version: 0.0.0-draft
-  description: 仓库准备阶段的接口契约占位。paths 为空，尚无实现或正式确定的接口。
-paths: {}
+  title: "RBAC Permission System — 第一阶段统一 API"
+  version: "0.3.0"
+  description: "第一阶段 RBAC0 契约：完整面向功能后端、完整可独立演示界面原型、API 设计及服务器运行交付。前缀 /api/v1；成功响应直接返回 JSON，不额外包 data；204 无响应体。用户 ID、部门 ID、角色 ID 均为字符串。Cookie 会话 JSESSIONID，后端逐请求验证账号、启用角色、权限及数据范围，前端身份和权限不可信。首次登录/重置后未改密仅允许 GET /me、PATCH /me/password、POST /auth/logout，其余 403 PASSWORD_CHANGE_REQUIRED。对象检查顺序为认证→权限→数据范围→目标；未授予默认拒绝。账号类别不属于需求，不存在 accountType 字段。实际测试与部署状态见 docs/stage1/verification-record.md；契约定义不是通过验收的证据。"
+servers:
+  -
+    url: "/api/v1"
+    description: "同源部署；本地后端默认 http://localhost:8080/api/v1"
+tags:
+  -
+    name: "认证"
+  -
+    name: "本人"
+  -
+    name: "门户"
+  -
+    name: "员工台账"
+  -
+    name: "用户"
+  -
+    name: "部门"
+  -
+    name: "角色"
+  -
+    name: "授权"
+  -
+    name: "目录"
+x-admin-permission-mapping:
+  -
+    source: "sys:f339:read"
+    derived:
+      - "rbac:user:read"
+  -
+    source: "sys:f339:create"
+    derived:
+      - "rbac:user:create"
+  -
+    source: "sys:f339:edit"
+    derived:
+      - "rbac:user:update"
+      - "rbac:user:assign-role"
+  -
+    source: "sys:f339:delete"
+    derived:
+      - "rbac:user:delete"
+  -
+    source: "sys:f340:read"
+    derived:
+      - "rbac:role:read"
+  -
+    source: "sys:f340:create"
+    derived:
+      - "rbac:role:create"
+  -
+    source: "sys:f340:edit"
+    derived:
+      - "rbac:role:update"
+  -
+    source: "sys:f340:delete"
+    derived:
+      - "rbac:role:delete"
+  -
+    source: "sys:f341:read"
+    derived:
+      - "rbac:permission:read"
+  -
+    source: "sys:f341:edit"
+    derived:
+      - "rbac:role:grant"
+  -
+    source: "sys:f342:read"
+    derived:
+      - "rbac:department:read"
+  -
+    source: "sys:f348:read"
+    derived:
+      - "rbac:log:read"
+  -
+    source: "sys:f348:export"
+    derived:
+      - "rbac:log:export"
+  -
+    source: "sys:f349:read"
+    derived:
+      - "rbac:log:read"
+  -
+    source: "sys:f349:export"
+    derived:
+      - "rbac:log:export"
+x-scope-merge: "同码 ALL > DEPT > SELF；不同码独立；rbac 映射继承源清单权限范围。"
+x-phase-boundary: "阶段二角色继承、阶段三 SSD/DSD/基数/审计日志接口不在本契约内。日志映射预留但阶段一不提供日志业务接口。"
+paths:
+  "/auth/login":
+    post:
+      tags:
+        - "认证"
+      summary: "工号或手机号登录"
+      operationId: "post_auth_login"
+      x-required-permission: "none"
+      security: []
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      description: "成功轮换 JSESSIONID；Cookie HttpOnly、SameSite=Lax。第一阶段所有已分配且启用的角色生效。用户不存在、密码错误、停用、锁定一律 401 INVALID_CREDENTIALS / 用户名或密码错误。须改密时仍建立受限会话。"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  "/auth/logout":
+    post:
+      tags:
+        - "认证"
+      summary: "退出并使旧会话失效"
+      operationId: "post_auth_logout"
+      x-required-permission: "none"
+      description: "退出后原 JSESSIONID 访问受保护接口返回 401。退出要求有效登录；无效会话返回 401。"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/Success"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  "/me":
+    get:
+      tags:
+        - "本人"
+      summary: "当前用户"
+      operationId: "get_me"
+      x-required-permission: "none"
+      description: "首次改密受限会话允许调用；不返回密码或哈希。"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/CurrentUser"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  "/me/password":
+    patch:
+      tags:
+        - "本人"
+      summary: "校验旧密码并修改本人密码"
+      operationId: "patch_me_password"
+      x-required-permission: "none"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              $ref: "#/components/schemas/PasswordRequest"
+      description: "首次登录与密码重置后必须使用此接口改密。旧密码错误 400 BAD_OLD_PASSWORD；新密码 8–128 字符且须与旧密码不同。成功清除 mustChangePassword，当前会话保留，其他旧密码会话失效。"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  "/me/permissions":
+    get:
+      tags:
+        - "本人"
+      summary: "当前有效权限、范围及来源角色"
+      operationId: "get_me_permissions"
+      x-required-permission: "none"
+      description: "与后端鉴权共用计算结果；无角色返回空数组。version 为当前用户角色集合版本，只用于展示，不能用于角色授权保存。角色/授权/停用变化于下一次请求生效。"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/MyPermissions"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  "/portal/menu":
+    get:
+      tags:
+        - "门户"
+      summary: "按查看权限返回系统、模块、功能点树"
+      operationId: "get_portal_menu"
+      x-required-permission: "none"
+      description: "仅包含拥有对应 read 权限的功能点，空模块和空系统不返回。没有启用角色时为空数组。"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/MenuSystem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  "/portal/functions/{functionCode}":
+    get:
+      tags:
+        - "门户"
+      summary: "功能占位页及六个操作状态"
+      operationId: "get_portal_functions_functionCode"
+      x-required-permission: "{systemCode}:{functionCode}:read"
+      parameters:
+        -
+          name: "functionCode"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+      description: "按功能点对应 read 权限校验。actions 固定包含六个动作；无权动作 enabled=false、scope=null。占位动作不产生业务变更。"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/Function"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  "/ledger/employees":
+    get:
+      tags:
+        - "员工台账"
+      summary: "按查看范围分页查询员工"
+      operationId: "get_ledger_employees"
+      x-required-permission: "hr:f046:read"
+      parameters:
+        -
+          name: "keyword"
+          in: "query"
+          description: "按工号、姓名等关键词筛选"
+          schema:
+            type: "string"
+        -
+          name: "departmentId"
+          in: "query"
+          description: "筛选该部门及全部下级，不扩大已有查看范围"
+          schema:
+            type: "string"
+        -
+          name: "page"
+          in: "query"
+          description: "从 1 开始"
+          schema:
+            type: "integer"
+            minimum: 1
+            default: 1
+        -
+          name: "pageSize"
+          in: "query"
+          description: "每页条数，最大 100"
+          schema:
+            type: "integer"
+            minimum: 1
+            maximum: 100
+            default: 20
+      description: "由 hr:f046:read 的范围裁剪；编辑另由 hr:f046:edit 对目标检查。前端从 /me/permissions 获取对应范围计算按钮状态，列表不返回 editable/readScope/editScope。"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/EmployeePage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  "/ledger/employees/{id}":
+    patch:
+      tags:
+        - "员工台账"
+      summary: "按编辑范围修改电话、邮箱"
+      operationId: "patch_ledger_employees_id"
+      x-required-permission: "hr:f046:edit"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              $ref: "#/components/schemas/EmployeeContact"
+      description: "只能传 phone、email。其他字段 400 FIELD_NOT_EDITABLE；目标不存在或范围外统一 403 OUT_OF_SCOPE 且不泄露对象资料。新增/删除/审批/导出为原型占位，不提供接口。"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/Employee"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  "/users":
+    get:
+      tags:
+        - "用户"
+      summary: "筛选管理范围内的用户"
+      operationId: "get_users"
+      x-required-permission: "rbac:user:read"
+      parameters:
+        -
+          name: "keyword"
+          in: "query"
+          description: "按工号、姓名等关键词筛选"
+          schema:
+            type: "string"
+        -
+          name: "departmentId"
+          in: "query"
+          description: "包含全部下级；范围外筛选返回空结果"
+          schema:
+            type: "string"
+        -
+          name: "roleId"
+          in: "query"
+          description: "角色 ID"
+          schema:
+            type: "string"
+        -
+          name: "username"
+          in: "query"
+          description: "工号关键词"
+          schema:
+            type: "string"
+        -
+          name: "name"
+          in: "query"
+          description: "姓名关键词"
+          schema:
+            type: "string"
+        -
+          name: "page"
+          in: "query"
+          description: "从 1 开始"
+          schema:
+            type: "integer"
+            minimum: 1
+            default: 1
+        -
+          name: "pageSize"
+          in: "query"
+          description: "每页条数，最大 100"
+          schema:
+            type: "integer"
+            minimum: 1
+            maximum: 100
+            default: 20
+      description: "先按权限范围过滤，再筛选、统计和分页；不会因篡改部门或角色参数扩大范围。"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/UserPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags:
+        - "用户"
+      summary: "新增用户，不同时分配角色"
+      operationId: "post_users"
+      x-required-permission: "rbac:user:create"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              $ref: "#/components/schemas/CreateUser"
+      description: "工号唯一；phone 可空，非空唯一。初始密码来自部署配置，不从请求接受，不在响应返回。新账号 mustChangePassword=true。角色通过独立整组替换接口分配。新部门必须在管理范围内；SELF不能用于创建其他账号，返回403 OUT_OF_SCOPE。"
+      responses:
+        "201":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  "/users/{id}":
+    get:
+      tags:
+        - "用户"
+      summary: "查看范围内用户详情"
+      operationId: "get_users_id"
+      x-required-permission: "rbac:user:read"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+      description: "目标不存在或范围外统一 403 OUT_OF_SCOPE。"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags:
+        - "用户"
+      summary: "编辑用户基本信息"
+      operationId: "put_users_id"
+      x-required-permission: "rbac:user:update"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              $ref: "#/components/schemas/UpdateUser"
+      description: "目标用户及修改后的部门都必须在管理范围内；工号不可改。"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags:
+        - "用户"
+      summary: "删除用户并清理关联"
+      operationId: "delete_users_id"
+      x-required-permission: "rbac:user:delete"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+      description: "角色关联级联删除；其担任负责人的部门 manager_user_id 置空。不能删除自己或唯一 admin，409 PROTECTED_ACCOUNT。"
+      responses:
+        "204":
+          description: "成功"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  "/users/{id}/status":
+    patch:
+      tags:
+        - "用户"
+      summary: "启用或停用用户"
+      operationId: "patch_users_id_status"
+      x-required-permission: "rbac:user:update"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              $ref: "#/components/schemas/UserStatusRequest"
+      description: "不能停用自己或唯一 admin。停用后该用户既有会话在下一次请求返回 401。"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  "/users/{id}/password-reset":
+    post:
+      tags:
+        - "用户"
+      summary: "重置密码并要求首次改密"
+      operationId: "post_users_id_password_reset"
+      x-required-permission: "rbac:user:update"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+      description: "恢复部署配置的初始密码；不接受明文密码输入、不返回密码。清除/限制既有会话，后续登录 mustChangePassword=true。本人改密应使用 /me/password。"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  "/users/{id}/roles":
+    get:
+      tags:
+        - "授权"
+      summary: "读取用户完整角色集合和版本"
+      operationId: "get_users_id_roles"
+      x-required-permission: "rbac:user:read"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+      description: "按 rbac:user:read 的范围检查目标。"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/UserRoles"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags:
+        - "授权"
+      summary: "带版本号整组替换用户角色"
+      operationId: "put_users_id_roles"
+      x-required-permission: "rbac:user:assign-role"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              $ref: "#/components/schemas/ReplaceUserRoles"
+      description: "空 roleIds 撤销全部。重复项 400。version 必须等于当前 role_version，成功原子替换并 +1；旧版 409 VERSION_CONFLICT。不能改自己或 admin 的角色。ADMIN 不能授给他人；部门管理员仅可增删本部门及下级用户的业务角色，不可增删管理类角色。已有角色/授权的变更下一次请求生效。"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/UserRoles"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  "/departments":
+    get:
+      tags:
+        - "部门"
+      summary: "查询管理范围内的只读部门树"
+      operationId: "get_departments"
+      x-required-permission: "rbac:department:read"
+      description: "ALL 返回完整树；DEPT 返回本人部门及全部下级；SELF 按本人部门裁剪。负责人姓名关联用户查询，不按姓名连接；人员计数是该部门直接员工数。"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                type: "array"
+                items:
+                  $ref: "#/components/schemas/Department"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  "/departments/{id}/members":
+    get:
+      tags:
+        - "部门"
+      summary: "某部门及全部下级的员工"
+      operationId: "get_departments_id_members"
+      x-required-permission: "rbac:department:read"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+        -
+          name: "page"
+          in: "query"
+          description: "从 1 开始"
+          schema:
+            type: "integer"
+            minimum: 1
+            default: 1
+        -
+          name: "pageSize"
+          in: "query"
+          description: "每页条数，最大 100"
+          schema:
+            type: "integer"
+            minimum: 1
+            maximum: 100
+            default: 20
+      description: "部门必须在该权限范围内；范围外或不存在统一403 OUT_OF_SCOPE。结果中的人员再次按该权限范围裁剪，SELF仅返回本人，不返回本人部门的其他人员。"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/UserPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  "/roles":
+    get:
+      tags:
+        - "角色"
+      summary: "角色分页列表"
+      operationId: "get_roles"
+      x-required-permission: "rbac:role:read"
+      parameters:
+        -
+          name: "keyword"
+          in: "query"
+          description: "按工号、姓名等关键词筛选"
+          schema:
+            type: "string"
+        -
+          name: "page"
+          in: "query"
+          description: "从 1 开始"
+          schema:
+            type: "integer"
+            minimum: 1
+            default: 1
+        -
+          name: "pageSize"
+          in: "query"
+          description: "每页条数，最大 100"
+          schema:
+            type: "integer"
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/RolePage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags:
+        - "角色"
+      summary: "新增自建角色"
+      operationId: "post_roles"
+      x-required-permission: "rbac:role:create"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              $ref: "#/components/schemas/CreateRole"
+      description: "角色编码唯一且不可后续修改。新角色没有直接授权。"
+      responses:
+        "201":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/Role"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  "/roles/{id}":
+    get:
+      tags:
+        - "角色"
+      summary: "角色详情"
+      operationId: "get_roles_id"
+      x-required-permission: "rbac:role:read"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/Role"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    patch:
+      tags:
+        - "角色"
+      summary: "编辑角色名称与说明"
+      operationId: "patch_roles_id"
+      x-required-permission: "rbac:role:update"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              $ref: "#/components/schemas/UpdateRole"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/Role"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags:
+        - "角色"
+      summary: "删除自建角色及关联授权"
+      operationId: "delete_roles_id"
+      x-required-permission: "rbac:role:delete"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+        -
+          name: "confirm"
+          in: "query"
+          description: "角色有用户时必须显式 true"
+          schema:
+            type: "boolean"
+            default: false
+      description: "六个内置角色不可删除。自建角色仍有用户且 confirm 非 true 返回 409 ROLE_HAS_USERS；确认删除后清理角色授权、用户关联，并更新受影响用户角色版本。"
+      responses:
+        "204":
+          description: "成功"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  "/roles/{id}/status":
+    patch:
+      tags:
+        - "角色"
+      summary: "启用或停用角色"
+      operationId: "patch_roles_id_status"
+      x-required-permission: "rbac:role:update"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              $ref: "#/components/schemas/RoleStatusRequest"
+      description: "超级管理员角色不可停用，409 PROTECTED_ROLE。其他角色停用后其权限于用户下一次请求失效，启用后恢复。"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/Role"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  "/roles/{id}/users":
+    get:
+      tags:
+        - "角色"
+      summary: "查询角色下的用户"
+      operationId: "get_roles_id_users"
+      x-required-permission: "rbac:role:read"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+        -
+          name: "page"
+          in: "query"
+          description: "从 1 开始"
+          schema:
+            type: "integer"
+            minimum: 1
+            default: 1
+        -
+          name: "pageSize"
+          in: "query"
+          description: "每页条数，最大 100"
+          schema:
+            type: "integer"
+            minimum: 1
+            maximum: 100
+            default: 20
+      description: "必须有rbac:role:read；成员按当前会话rbac:user:read的范围裁剪，缺用户查看权限返回空分页。"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/UserPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+      x-scope-source: "rbac:user:read"
+  "/roles/{id}/permissions":
+    get:
+      tags:
+        - "授权"
+      summary: "读取角色直接授权和集合版本"
+      operationId: "get_roles_id_permissions"
+      x-required-permission:
+        - "rbac:role:read"
+        - "rbac:permission:read"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+      description: "同时要求角色查看和目录查看。readOnly仅表示角色本身受保护（ADMIN），非ADMIN仍须会话有rbac:role:grant才可保存。"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/RolePermissions"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    put:
+      tags:
+        - "授权"
+      summary: "带范围与版本整组替换角色授权"
+      operationId: "put_roles_id_permissions"
+      x-required-permission: "rbac:role:grant"
+      parameters:
+        -
+          name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              $ref: "#/components/schemas/ReplaceRolePermissions"
+      description: "每条 grants 为清单权限码与范围；rbac:* 为派生码不能直接授权。前端选非 read 动作须自动勾 read；后端缺 read 返回 400 READ_REQUIRED。未知码 400 UNKNOWN_PERMISSION。对 ADMIN 返回 409 PROTECTED_ROLE。全部校验后在同一事务更新并递增 permission_version；版本旧 409；中途失败全部回滚。"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/RolePermissions"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  "/catalog/functions":
+    get:
+      tags:
+        - "目录"
+      summary: "按功能点分页查询完整权限目录"
+      operationId: "get_catalog_functions"
+      x-required-permission: "rbac:permission:read"
+      parameters:
+        -
+          name: "systemCode"
+          in: "query"
+          description: "系统短码，如 hr、sys"
+          schema:
+            type: "string"
+        -
+          name: "moduleId"
+          in: "query"
+          description: "模块 ID"
+          schema:
+            type: "string"
+        -
+          name: "keyword"
+          in: "query"
+          description: "按工号、姓名等关键词筛选"
+          schema:
+            type: "string"
+        -
+          name: "page"
+          in: "query"
+          description: "从 1 开始"
+          schema:
+            type: "integer"
+            minimum: 1
+            default: 1
+        -
+          name: "pageSize"
+          in: "query"
+          description: "每页条数，最大 100"
+          schema:
+            type: "integer"
+            minimum: 1
+            maximum: 100
+            default: 20
+      description: "stats 是整个目录的统计，不随筛选或分页缩小。正式全量目录为 18 系统 / 115 模块 / 359 功能点 / 2154 清单权限，rbac 派生码不计入 2154。目录只读，由离线导入维护。"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/CatalogPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  "/permissions":
+    get:
+      tags:
+        - "目录"
+      summary: "兼容：按单条权限分页查询"
+      operationId: "get_permissions"
+      x-required-permission: "rbac:permission:read"
+      parameters:
+        -
+          name: "systemCode"
+          in: "query"
+          description: "系统短码"
+          schema:
+            type: "string"
+        -
+          name: "moduleId"
+          in: "query"
+          description: "模块 ID"
+          schema:
+            type: "string"
+        -
+          name: "keyword"
+          in: "query"
+          description: "按工号、姓名等关键词筛选"
+          schema:
+            type: "string"
+        -
+          name: "page"
+          in: "query"
+          description: "从 1 开始"
+          schema:
+            type: "integer"
+            minimum: 1
+            default: 1
+        -
+          name: "pageSize"
+          in: "query"
+          description: "每页条数，最大 100"
+          schema:
+            type: "integer"
+            minimum: 1
+            maximum: 100
+            default: 20
+      description: "兼容 PR #12 的查询入口，新增界面优先使用 /catalog/functions。"
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/PermissionPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  "/resources":
+    get:
+      tags:
+        - "目录"
+      summary: "兼容：逐级查询资源节点"
+      operationId: "get_resources"
+      x-required-permission: "rbac:permission:read"
+      parameters:
+        -
+          name: "parentId"
+          in: "query"
+          description: "父节点 ID，不传为系统"
+          schema:
+            type: "string"
+        -
+          name: "page"
+          in: "query"
+          description: "从 1 开始"
+          schema:
+            type: "integer"
+            minimum: 1
+            default: 1
+        -
+          name: "pageSize"
+          in: "query"
+          description: "每页条数，最大 100"
+          schema:
+            type: "integer"
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        "200":
+          description: "成功"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/ResourcePage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  "/health":
+    get:
+      tags:
+        - "认证"
+      summary: "应用及数据库就绪检查"
+      operationId: "get_health"
+      security: []
+      x-required-permission: "none"
+      responses:
+        "200":
+          description: "数据库SELECT 1成功，应用就绪"
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                required:
+                  - "status"
+                properties:
+                  status:
+                    type: "string"
+                    enum:
+                      - "UP"
+        "500":
+          $ref: "#/components/responses/InternalError"
+components:
+  securitySchemes:
+    sessionCookie:
+      type: "apiKey"
+      in: "cookie"
+      name: "JSESSIONID"
+      description: "服务端 HttpSession；HttpOnly、SameSite=Lax，HTTPS 部署启用 Secure。客户端自动发送同源 Cookie。"
+  responses:
+    BadRequest:
+      description: "参数错误。VALIDATION、BAD_OLD_PASSWORD、FIELD_NOT_EDITABLE、UNKNOWN_PERMISSION 或 READ_REQUIRED。"
+      content:
+        "application/json":
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Unauthenticated:
+      description: "401 UNAUTHENTICATED：未登录、会话失效、用户已停用或删除。登录失败使用 INVALID_CREDENTIALS，提示统一为“用户名或密码错误”。"
+      content:
+        "application/json":
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Forbidden:
+      description: "403 FORBIDDEN（缺权限/禁止授予管理角色）、OUT_OF_SCOPE（范围外与不存在统一）、PASSWORD_CHANGE_REQUIRED（须先修改密码）。OUT_OF_SCOPE 不携带目标字段。"
+      content:
+        "application/json":
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: "404 NOT_FOUND：不存在的角色或目录对象。"
+      content:
+        "application/json":
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Conflict:
+      description: "409 VERSION_CONFLICT、PROTECTED_ACCOUNT、PROTECTED_ROLE、ROLE_HAS_USERS、DUPLICATE_USERNAME、DUPLICATE_PHONE 或 DUPLICATE_ROLE_CODE。版本冲突 details.currentVersion；角色仍有用户 details.userCount。所有冲突均不产生部分写入。"
+      content:
+        "application/json":
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    InternalError:
+      description: "服务端失败，不返回堆栈或秘密。事务整体回滚。"
+      content:
+        "application/json":
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+  schemas:
+    Scope:
+      type: "string"
+      enum:
+        - "ALL"
+        - "DEPT"
+        - "SELF"
+      description: "ALL 全部；DEPT 当前用户所在部门及其全部下级；SELF 当前用户。多个角色对同一权限码取最大范围，ALL > DEPT > SELF，不跨权限码合并。"
+    Status:
+      type: "string"
+      enum:
+        - "ENABLED"
+        - "DISABLED"
+    Action:
+      type: "string"
+      enum:
+        - "read"
+        - "create"
+        - "edit"
+        - "approve"
+        - "export"
+        - "delete"
+    PermissionCode:
+      type: "string"
+      pattern: "^(?:[a-z0-9]{2,16}:f[0-9]{3}:(?:read|create|edit|approve|export|delete)|rbac:[a-z]+:[a-z-]+)$"
+      example: "hr:f046:edit"
+      description: "稳定权限码。rbac:* 仅为后端派生，不能作为角色直接授权的输入。"
+    Grant:
+      type: "object"
+      required:
+        - "code"
+        - "scope"
+      additionalProperties: false
+      properties:
+        code:
+          $ref: "#/components/schemas/PermissionCode"
+        scope:
+          $ref: "#/components/schemas/Scope"
+    RoleSource:
+      type: "object"
+      required:
+        - "id"
+        - "code"
+        - "name"
+      properties:
+        id:
+          type: "string"
+          description: "数据库主键在 HTTP 中以字符串传输"
+        code:
+          type: "string"
+        name:
+          type: "string"
+    PermissionScope:
+      type: "object"
+      required:
+        - "permissionCode"
+        - "scope"
+        - "roles"
+      properties:
+        permissionCode:
+          $ref: "#/components/schemas/PermissionCode"
+        scope:
+          $ref: "#/components/schemas/Scope"
+        roles:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/RoleSource"
+    User:
+      type: "object"
+      required:
+        - "id"
+        - "username"
+        - "name"
+        - "departmentId"
+        - "status"
+        - "mustChangePassword"
+      properties:
+        id:
+          type: "string"
+          description: "数据库主键在 HTTP 中以字符串传输"
+        username:
+          type: "string"
+          maxLength: 32
+        name:
+          type: "string"
+          maxLength: 32
+        departmentId:
+          type: "string"
+          description: "数据库主键在 HTTP 中以字符串传输"
+        departmentName:
+          type: "string"
+        position:
+          type: "string"
+          maxLength: 32
+          nullable: true
+        phone:
+          type: "string"
+          maxLength: 20
+          nullable: true
+        email:
+          type: "string"
+          maxLength: 64
+          nullable: true
+        status:
+          $ref: "#/components/schemas/Status"
+        mustChangePassword:
+          type: "boolean"
+        roleIds:
+          type: "array"
+          items:
+            type: "string"
+            description: "数据库主键在 HTTP 中以字符串传输"
+        roleVersion:
+          type: "integer"
+          minimum: 0
+    UserPage:
+      type: "object"
+      required:
+        - "items"
+        - "page"
+        - "pageSize"
+        - "total"
+      properties:
+        items:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/User"
+        page:
+          type: "integer"
+          minimum: 1
+        pageSize:
+          type: "integer"
+          minimum: 1
+          maximum: 100
+        total:
+          type: "integer"
+          minimum: 0
+    CurrentUser:
+      $ref: "#/components/schemas/User"
+    LoginRequest:
+      type: "object"
+      required:
+        - "account"
+        - "password"
+      additionalProperties: false
+      properties:
+        account:
+          type: "string"
+          minLength: 1
+          maxLength: 64
+          description: "工号 username 或非空唯一手机号"
+        password:
+          type: "string"
+          format: "password"
+          minLength: 1
+          maxLength: 128
+    LoginResponse:
+      type: "object"
+      required:
+        - "user"
+        - "permissionCodes"
+        - "mustChangePassword"
+      properties:
+        user:
+          $ref: "#/components/schemas/CurrentUser"
+        permissionCodes:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/PermissionCode"
+        mustChangePassword:
+          type: "boolean"
+    PasswordRequest:
+      type: "object"
+      required:
+        - "oldPassword"
+        - "newPassword"
+      additionalProperties: false
+      properties:
+        oldPassword:
+          type: "string"
+          format: "password"
+          minLength: 1
+          maxLength: 128
+        newPassword:
+          type: "string"
+          format: "password"
+          minLength: 8
+          maxLength: 128
+    Success:
+      type: "object"
+      required:
+        - "success"
+      properties:
+        success:
+          type: "boolean"
+          enum:
+            - true
+    MyPermissions:
+      type: "object"
+      required:
+        - "userId"
+        - "roleIds"
+        - "permissionCodes"
+        - "scopes"
+        - "version"
+      properties:
+        userId:
+          type: "string"
+          description: "数据库主键在 HTTP 中以字符串传输"
+        roleIds:
+          type: "array"
+          items:
+            type: "string"
+            description: "数据库主键在 HTTP 中以字符串传输"
+        permissionCodes:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/PermissionCode"
+        scopes:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/PermissionScope"
+        version:
+          type: "integer"
+          minimum: 0
+    CreateUser:
+      type: "object"
+      required:
+        - "username"
+        - "name"
+        - "departmentId"
+      additionalProperties: false
+      properties:
+        username:
+          type: "string"
+          minLength: 1
+          maxLength: 32
+          pattern: "^[A-Za-z0-9_-]{1,32}$"
+        name:
+          type: "string"
+          minLength: 1
+          maxLength: 32
+        departmentId:
+          type: "string"
+          pattern: "^[0-9]+$"
+          description: "目标部门主键字符串"
+        position:
+          type: "string"
+          maxLength: 32
+          nullable: true
+        phone:
+          type: "string"
+          maxLength: 20
+          nullable: true
+          pattern: "^(?:|[+0-9 -]{3,20})$"
+        email:
+          type: "string"
+          maxLength: 64
+          nullable: true
+          format: "email"
+    UpdateUser:
+      type: "object"
+      required:
+        - "name"
+        - "departmentId"
+      additionalProperties: false
+      properties:
+        name:
+          type: "string"
+          minLength: 1
+          maxLength: 32
+        departmentId:
+          type: "string"
+          pattern: "^[0-9]+$"
+          description: "目标部门主键字符串"
+        position:
+          type: "string"
+          maxLength: 32
+          nullable: true
+        phone:
+          type: "string"
+          maxLength: 20
+          nullable: true
+          pattern: "^(?:|[+0-9 -]{3,20})$"
+        email:
+          type: "string"
+          maxLength: 64
+          nullable: true
+          format: "email"
+    UserStatusRequest:
+      type: "object"
+      required:
+        - "status"
+      additionalProperties: false
+      properties:
+        status:
+          $ref: "#/components/schemas/Status"
+    UserRoles:
+      type: "object"
+      required:
+        - "userId"
+        - "roleIds"
+        - "version"
+      properties:
+        userId:
+          type: "string"
+          description: "数据库主键在 HTTP 中以字符串传输"
+        roleIds:
+          type: "array"
+          items:
+            type: "string"
+            description: "数据库主键在 HTTP 中以字符串传输"
+          uniqueItems: true
+        version:
+          type: "integer"
+          minimum: 1
+    ReplaceUserRoles:
+      type: "object"
+      required:
+        - "roleIds"
+        - "version"
+      additionalProperties: false
+      properties:
+        roleIds:
+          type: "array"
+          items:
+            type: "string"
+            pattern: "^[0-9]+$"
+            minLength: 1
+          uniqueItems: true
+          maxItems: 1000
+        version:
+          type: "integer"
+          minimum: 1
+    Role:
+      type: "object"
+      required:
+        - "id"
+        - "code"
+        - "name"
+        - "enabled"
+        - "builtin"
+        - "permissionVersion"
+      properties:
+        id:
+          type: "string"
+          description: "数据库主键在 HTTP 中以字符串传输"
+        code:
+          type: "string"
+          maxLength: 32
+        name:
+          type: "string"
+          maxLength: 32
+        description:
+          type: "string"
+          maxLength: 255
+          nullable: true
+        enabled:
+          type: "boolean"
+        builtin:
+          type: "boolean"
+        adminRole:
+          type: "boolean"
+        userCount:
+          type: "integer"
+          minimum: 0
+        grantCount:
+          type: "integer"
+          minimum: 0
+        permissionVersion:
+          type: "integer"
+          minimum: 1
+    RolePage:
+      type: "object"
+      required:
+        - "items"
+        - "page"
+        - "pageSize"
+        - "total"
+      properties:
+        items:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/Role"
+        page:
+          type: "integer"
+          minimum: 1
+        pageSize:
+          type: "integer"
+          minimum: 1
+          maximum: 100
+        total:
+          type: "integer"
+          minimum: 0
+    CreateRole:
+      type: "object"
+      required:
+        - "code"
+        - "name"
+      additionalProperties: false
+      properties:
+        code:
+          type: "string"
+          minLength: 1
+          maxLength: 32
+          pattern: "^[A-Za-z][A-Za-z0-9_]{0,31}$"
+        name:
+          type: "string"
+          minLength: 1
+          maxLength: 32
+        description:
+          type: "string"
+          maxLength: 255
+          nullable: true
+    UpdateRole:
+      type: "object"
+      required:
+        - "name"
+      additionalProperties: false
+      properties:
+        name:
+          type: "string"
+          minLength: 1
+          maxLength: 32
+        description:
+          type: "string"
+          maxLength: 255
+          nullable: true
+    RoleStatusRequest:
+      type: "object"
+      required:
+        - "enabled"
+      additionalProperties: false
+      properties:
+        enabled:
+          type: "boolean"
+    RolePermissions:
+      type: "object"
+      required:
+        - "roleId"
+        - "grants"
+        - "version"
+        - "readOnly"
+      properties:
+        roleId:
+          type: "string"
+          description: "数据库主键在 HTTP 中以字符串传输"
+        grants:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/Grant"
+        version:
+          type: "integer"
+          minimum: 1
+        readOnly:
+          type: "boolean"
+          description: "角色本身是否受保护（ADMIN=true）；false仍须当前会话拥有rbac:role:grant才可PUT。"
+    ReplaceRolePermissions:
+      type: "object"
+      required:
+        - "grants"
+        - "version"
+      additionalProperties: false
+      properties:
+        grants:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/Grant"
+          maxItems: 3000
+        version:
+          type: "integer"
+          minimum: 1
+    Department:
+      type: "object"
+      required:
+        - "id"
+        - "name"
+        - "type"
+        - "employeeCount"
+        - "children"
+      properties:
+        id:
+          type: "string"
+          description: "数据库主键在 HTTP 中以字符串传输"
+        name:
+          type: "string"
+        type:
+          type: "string"
+          enum:
+            - "HQ"
+            - "HQ_DEPT"
+            - "BRANCH"
+            - "BRANCH_DEPT"
+            - "PROJECT"
+        managerUserId:
+          type: "string"
+          description: "数据库主键在 HTTP 中以字符串传输"
+          nullable: true
+        managerName:
+          type: "string"
+          nullable: true
+        parentId:
+          type: "string"
+          description: "数据库主键在 HTTP 中以字符串传输"
+          nullable: true
+        parentName:
+          type: "string"
+          nullable: true
+        employeeCount:
+          type: "integer"
+          minimum: 0
+        children:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/Department"
+    Employee:
+      type: "object"
+      required:
+        - "id"
+        - "username"
+        - "name"
+        - "departmentName"
+      properties:
+        id:
+          type: "string"
+          description: "数据库主键在 HTTP 中以字符串传输"
+        username:
+          type: "string"
+        name:
+          type: "string"
+        departmentId:
+          type: "string"
+          description: "数据库主键在 HTTP 中以字符串传输"
+        departmentName:
+          type: "string"
+        position:
+          type: "string"
+          nullable: true
+        phone:
+          type: "string"
+          nullable: true
+        email:
+          type: "string"
+          nullable: true
+    EmployeePage:
+      type: "object"
+      required:
+        - "items"
+        - "page"
+        - "pageSize"
+        - "total"
+      properties:
+        items:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/Employee"
+        page:
+          type: "integer"
+          minimum: 1
+        pageSize:
+          type: "integer"
+          minimum: 1
+          maximum: 100
+        total:
+          type: "integer"
+          minimum: 0
+    EmployeeContact:
+      type: "object"
+      additionalProperties: false
+      properties:
+        phone:
+          type: "string"
+          maxLength: 20
+          nullable: true
+          pattern: "^(?:|[+0-9 -]{3,20})$"
+        email:
+          type: "string"
+          maxLength: 64
+          nullable: true
+          format: "email"
+      minProperties: 1
+    FunctionAction:
+      type: "object"
+      required:
+        - "action"
+        - "enabled"
+        - "scope"
+      properties:
+        action:
+          $ref: "#/components/schemas/Action"
+        enabled:
+          type: "boolean"
+        scope:
+          type: "string"
+          enum:
+            - "ALL"
+            - "DEPT"
+            - "SELF"
+          nullable: true
+        label:
+          type: "string"
+    Function:
+      type: "object"
+      required:
+        - "functionCode"
+        - "name"
+        - "systemCode"
+        - "systemName"
+        - "moduleName"
+        - "actions"
+      properties:
+        functionCode:
+          type: "string"
+        name:
+          type: "string"
+        description:
+          type: "string"
+          nullable: true
+        systemCode:
+          type: "string"
+        systemName:
+          type: "string"
+        moduleId:
+          type: "string"
+          description: "数据库主键在 HTTP 中以字符串传输"
+        moduleName:
+          type: "string"
+        actions:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/FunctionAction"
+        placeholder:
+          type: "boolean"
+          description: "员工台账f046为false，其余业务占位页true"
+    MenuFunction:
+      type: "object"
+      required:
+        - "functionCode"
+        - "name"
+        - "description"
+      properties:
+        functionCode:
+          type: "string"
+        name:
+          type: "string"
+        description:
+          type: "string"
+          nullable: true
+    MenuModule:
+      type: "object"
+      required:
+        - "moduleId"
+        - "name"
+        - "functions"
+      properties:
+        moduleId:
+          type: "string"
+        name:
+          type: "string"
+        functions:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/MenuFunction"
+    MenuSystem:
+      type: "object"
+      required:
+        - "systemCode"
+        - "name"
+        - "modules"
+      properties:
+        systemCode:
+          type: "string"
+        name:
+          type: "string"
+        modules:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/MenuModule"
+    CatalogPermission:
+      type: "object"
+      required:
+        - "action"
+        - "code"
+      properties:
+        action:
+          $ref: "#/components/schemas/Action"
+        code:
+          $ref: "#/components/schemas/PermissionCode"
+    CatalogFunction:
+      type: "object"
+      required:
+        - "functionCode"
+        - "name"
+        - "systemCode"
+        - "systemName"
+        - "moduleId"
+        - "moduleName"
+        - "permissions"
+      properties:
+        functionCode:
+          type: "string"
+        name:
+          type: "string"
+        description:
+          type: "string"
+          nullable: true
+        systemCode:
+          type: "string"
+        systemName:
+          type: "string"
+        moduleId:
+          type: "string"
+          description: "数据库主键在 HTTP 中以字符串传输"
+        moduleName:
+          type: "string"
+        permissions:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/CatalogPermission"
+    CatalogStats:
+      type: "object"
+      required:
+        - "systems"
+        - "modules"
+        - "functions"
+        - "permissions"
+      properties:
+        systems:
+          type: "integer"
+          minimum: 0
+        modules:
+          type: "integer"
+          minimum: 0
+        functions:
+          type: "integer"
+          minimum: 0
+        permissions:
+          type: "integer"
+          minimum: 0
+    CatalogPage:
+      type: "object"
+      required:
+        - "items"
+        - "page"
+        - "pageSize"
+        - "total"
+      properties:
+        items:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/CatalogFunction"
+        page:
+          type: "integer"
+          minimum: 1
+        pageSize:
+          type: "integer"
+          minimum: 1
+          maximum: 100
+        total:
+          type: "integer"
+          minimum: 0
+        stats:
+          $ref: "#/components/schemas/CatalogStats"
+    Permission:
+      type: "object"
+      required:
+        - "code"
+        - "functionCode"
+        - "functionName"
+        - "systemCode"
+        - "systemName"
+        - "moduleId"
+        - "moduleName"
+        - "action"
+      properties:
+        code:
+          $ref: "#/components/schemas/PermissionCode"
+        systemName:
+          type: "string"
+        moduleId:
+          type: "string"
+          description: "数据库主键在 HTTP 中以字符串传输"
+        moduleName:
+          type: "string"
+        functionCode:
+          type: "string"
+        functionName:
+          type: "string"
+        action:
+          $ref: "#/components/schemas/Action"
+        systemCode:
+          type: "string"
+    PermissionPage:
+      type: "object"
+      required:
+        - "items"
+        - "page"
+        - "pageSize"
+        - "total"
+      properties:
+        items:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/Permission"
+        page:
+          type: "integer"
+          minimum: 1
+        pageSize:
+          type: "integer"
+          minimum: 1
+          maximum: 100
+        total:
+          type: "integer"
+          minimum: 0
+    Resource:
+      type: "object"
+      required:
+        - "id"
+        - "name"
+        - "type"
+        - "parentId"
+        - "hasChildren"
+      properties:
+        id:
+          type: "string"
+          description: "数据库主键在 HTTP 中以字符串传输"
+        name:
+          type: "string"
+        type:
+          type: "string"
+          enum:
+            - "system"
+            - "module"
+            - "function"
+        parentId:
+          type: "string"
+          description: "数据库主键在 HTTP 中以字符串传输"
+          nullable: true
+        hasChildren:
+          type: "boolean"
+    ResourcePage:
+      type: "object"
+      required:
+        - "items"
+        - "page"
+        - "pageSize"
+        - "total"
+      properties:
+        items:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/Resource"
+        page:
+          type: "integer"
+          minimum: 1
+        pageSize:
+          type: "integer"
+          minimum: 1
+          maximum: 100
+        total:
+          type: "integer"
+          minimum: 0
+    ErrorResponse:
+      type: "object"
+      required:
+        - "error"
+      properties:
+        error:
+          type: "object"
+          required:
+            - "code"
+            - "message"
+            - "requestId"
+          properties:
+            code:
+              type: "string"
+            message:
+              type: "string"
+            requestId:
+              type: "string"
+              description: "用于关联服务端日志，不包含凭证"
+            details:
+              type: "object"
+              nullable: true
+              additionalProperties: true
+security:
+  -
+    sessionCookie: []

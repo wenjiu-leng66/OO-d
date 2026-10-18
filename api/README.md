@@ -1,11 +1,11 @@
-# API 契约
+# 第一阶段 API 契约
 
-主责：接口作者；成员 6 维护一致性，前端成员确认可用性。
+[openapi.yaml](openapi.yaml) 是统一接口文件，版本 `0.3.0`，覆盖认证/首次改密、当前权限、门户、员工台账、用户、部门、角色、目录、两种授权整组替换，以及健康检查。面向功能后端位于 `backend-procedural/`；两后端共用契约是第二阶段目标。
 
-`openapi.yaml` 是协作中的权威接口文件。当前只有语法有效的空路径草案，**尚无已实现接口**。接口目录及规则草案见 [接口约定](../docs/standards/api-contract.md)。
+通用约定、`rbac:*` 映射、错误码、Cookie、`ALL/DEPT/SELF`、首次改密限制和版本含义见 [接口约定](../docs/standards/api-contract.md)。请求使用 `username`，无账号类别。角色授权使用 `grants:[{code,scope}]`，不能直接授予派生 `rbac:*`。
 
-每个接口正式开发前补齐路径、方法、认证、请求、响应、状态、错误码、所需权限和范围。变更经讨论后同时更新前端、两种后端和测试。
+部署后可打开 `/api-design/openapi.yaml` 下载权威文件；`/swagger-ui/index.html?url=/api-design/openapi.yaml` 与 `/v3/api-docs` 便于查看实际控制器入口，自动生成文档不能替代此处的字段、权限和错误规则。需导入工具调用时使用同源 Cookie 会话。
 
-可导入兼容 OpenAPI 的客户端工具查看。工具中的编辑结果也需要导出并通过 PR 更新本文件，不另建一份互相矛盾的接口标准。
+本版吸收成员 6 草案、成员 1 需求/差异评审与成员 4、5 后端实现；[合并来源](../docs/stage1/merge-sources.md) 保留版本。实际契约校验及 HTTP 执行结果见 [验证记录](../docs/stage1/verification-record.md)，不以“设计完成”推断“已测试通过”。
 
-成员 2 的当前实现、接口建议与待确认事项见 [API 协作反馈](proposals/member2-api-coordination-feedback.md)。该反馈不替代正式 OpenAPI。
+修改接口时同步契约、实现、客户端与验收用例；历史建议保留在 `proposals/`，不另立一份相互矛盾的标准。

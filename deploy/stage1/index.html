@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RBAC 第一期检查入口</title>
+<style>
+  body { margin: 0; background: #f1f5f9; color: #172033; font: 16px/1.7 system-ui,sans-serif; }
+  main { max-width: 850px; margin: 64px auto; padding: 32px; background: white; border-radius: 16px; }
+  h1 { margin-top: 0; font-size: 30px; } h2 { margin-top: 30px; font-size: 20px; }
+  a { color: #0757a8; } li { margin: 10px 0; } code { background: #edf2f7; padding: 2px 5px; }
+  .note { border-left: 4px solid #d39b24; background: #fff8df; padding: 14px; }
+</style>
+<main>
+<h1>RBAC 第一期检查入口</h1>
+<p>交付内容：完整后端、完整界面原型、API 设计，以及服务器运行配置。</p>
+<ol>
+  <li><a href="/">打开完整界面原型</a>：查看登录、门户、用户、部门、角色授权和台账交互。</li>
+  <li><a href="/swagger-ui/index.html">打开真实后端 Swagger UI</a>：通过 Cookie 会话实际登录并调用接口。</li>
+  <li><a href="/api-design/openapi.yaml">查看／下载 API 设计（OpenAPI）</a>。</li>
+  <li><a href="/health">检查后端与数据库健康状态</a>。</li>
+</ol>
+<p class="note">界面原型使用浏览器内的模拟数据。真实后端连接 MySQL，实际权限和持久化通过 Swagger 或 HTTP 自测脚本验收。原型登录密码与服务器后端密码分别管理。</p>
+<h2>后端检查顺序</h2>
+<p>先登录，再执行 <code>GET /api/v1/me</code> 和权限查询；依次检查未登录、无权限、本人／本部门范围、管理员保护、版本冲突、停用后旧会话和退出。随后重启容器，验证创建的数据仍然存在。</p>
+<p>后端演示账号与初始密码由部署负责人提供。首次登录后按接口提示改密。自测命令和预期结果见仓库 <code>deploy/README.md</code>。</p>
+</main>
+</html>

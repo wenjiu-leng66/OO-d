@@ -1,0 +1,10 @@
+spring:
+  datasource:
+    url: ${H2_URL:jdbc:h2:file:./work/rbac-local;MODE=MySQL;DB_CLOSE_DELAY=-1}
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:schema.sql
