@@ -3,7 +3,7 @@
 | 类别 | 入口 |
 | --- | --- |
 | 六人 GitHub 操作 | [使用手册](guides/github-team-manual.md) |
-| 范围与用例 | [范围](requirements/scope.md)、[用例模板](requirements/use-cases.md)、[待确认问题](requirements/questions.md) |
+| 需求 | [需求规格说明书](requirements/req-spec.md)、[需求访谈记录](requirements/grill-record.md)、[范围](requirements/scope.md)、[用例模板](requirements/use-cases.md)、[待确认问题](requirements/questions.md) |
 | UML | [图的准备说明](uml/README.md) |
 | 数据库 | [数据字典草案](database/data-dictionary.md) |
 | 技术决定 | [单仓库与双后端](decisions/0001-monorepo.md) |
