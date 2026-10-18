@@ -86,8 +86,10 @@ export function computeGrants(user) {
     for (const code of mapped || []) {
       const entry = derived.get(code) || { code, scope: null, sources: [], via: [] }
       entry.scope = policy.widerScope(entry.scope, grant.scope)
-      entry.sources.push(...grant.sources)
-      entry.via.push(grant.code)
+      for (const source of grant.sources) {
+        if (!entry.sources.some(item => item.roleId === source.roleId && item.scope === source.scope)) entry.sources.push(source)
+      }
+      if (!entry.via.includes(grant.code)) entry.via.push(grant.code)
       derived.set(code, entry)
     }
   }
@@ -107,6 +109,13 @@ function sessionUser({ allowPasswordChange = false } = {}) {
   }
   if (user.mustChangePassword && !allowPasswordChange) fail(403, 'PASSWORD_CHANGE_REQUIRED', '请先修改初始密码')
   return user
+}
+
+// 写入延迟只模拟网络；返回后再检查权限与版本，比较和提交之间不能再次让出执行权。
+async function waitForWrite(ms = 250) {
+  const actor = sessionUser()
+  await wait(null, ms)
+  if (sessionUserId !== actor.id) fail(401, 'UNAUTHENTICATED', '演示身份已改变，本次保存已取消')
 }
 
 function authorize(code) {
@@ -141,6 +150,12 @@ function checkContact({ phone, email }, userId) {
     if (db.users.some(item => item.phone === phone && item.id !== userId)) fail(409, 'DUPLICATE_PHONE', '手机号已被其他账号使用')
   }
   if (email !== undefined && email !== '' && !EMAIL.test(email)) fail(400, 'VALIDATION', '邮箱格式不正确')
+}
+
+function checkRoleInfo(name, description) {
+  if (!String(name || '').trim()) fail(400, 'VALIDATION', '请输入角色名称')
+  if (String(name).trim().length > 32) fail(400, 'VALIDATION', '角色名称不能超过 32 位')
+  if (String(description).length > 255) fail(400, 'VALIDATION', '角色说明不能超过 255 位')
 }
 
 function protectAccount(actor, target, action) {
@@ -316,6 +331,7 @@ export const api = {
   },
   // 整组替换并带版本号；版本不符返回 409，不做部分写入（GRANT-01）。
   async assignRoles(id, roleIds, version) {
+    await waitForWrite()
     const { actor, target } = userInScope('rbac:user:assign-role', id)
     protectAccount(actor, target, '修改角色')
     if (!Array.isArray(roleIds) || roleIds.some(roleId => !roleById(roleId))) fail(400, 'VALIDATION', '请选择有效角色')
@@ -328,7 +344,6 @@ export const api = {
     const adminChange = changed.map(roleById).find(role => role.kind === 'admin')
     if (!actorIsSuper && adminChange) fail(403, 'FORBIDDEN', `部门管理员只能分配或撤销业务角色，不能变更“${adminChange.name}”`)
     if (version !== target.roleVersion) fail(409, 'VERSION_CONFLICT', '该用户的角色已被其他管理员修改，请刷新后重试', { currentVersion: target.roleVersion })
-    await wait(null)
     target.roleIds = next
     target.roleVersion += 1
     return publicUser(target)
@@ -377,39 +392,39 @@ export const api = {
     })))
   },
   async createRole({ code, name, description = '' }) {
+    await waitForWrite()
     authorize('rbac:role:create')
     const roleCode = String(code || '').trim().toUpperCase()
     if (!/^[A-Z][A-Z0-9_]{1,31}$/.test(roleCode)) fail(400, 'VALIDATION', '角色编码须为大写字母开头的 2–32 位字母、数字或下划线')
-    if (!String(name || '').trim()) fail(400, 'VALIDATION', '请输入角色名称')
+    checkRoleInfo(name, description)
     if (db.roles.some(role => role.code === roleCode)) fail(409, 'DUPLICATE_ROLE_CODE', '角色编码已存在')
-    await wait(null)
     const role = { id: 'R' + String(nextRoleNo++).padStart(2, '0'), code: roleCode, name: name.trim(), kind: 'business', builtin: false, description, enabled: true, permissionVersion: 1, grants: [] }
     db.roles.push(role)
     return copy(role)
   },
   async updateRole(id, { name, description = '' }) {
+    await waitForWrite()
     authorize('rbac:role:update')
     const role = roleById(id) || fail(404, 'NOT_FOUND', '角色不存在')
-    if (!String(name || '').trim()) fail(400, 'VALIDATION', '请输入角色名称')
-    await wait(null)
+    checkRoleInfo(name, description)
     Object.assign(role, { name: name.trim(), description })
     return copy(role)
   },
   async setRoleEnabled(id, enabled) {
+    await waitForWrite()
     authorize('rbac:role:update')
     const role = roleById(id) || fail(404, 'NOT_FOUND', '角色不存在')
     if (role.id === SUPER_ADMIN && !enabled) fail(409, 'PROTECTED_ROLE', '超级管理员角色不能停用')
-    await wait(null)
     role.enabled = Boolean(enabled)
     return copy(role)
   },
   async deleteRole(id, { confirmed = false } = {}) {
+    await waitForWrite()
     authorize('rbac:role:delete')
     const role = roleById(id) || fail(404, 'NOT_FOUND', '角色不存在')
     if (role.builtin) fail(409, 'PROTECTED_ROLE', '内置角色不能删除')
     const holders = db.users.filter(user => user.roleIds.includes(id))
     if (holders.length && !confirmed) fail(409, 'ROLE_HAS_USERS', `该角色下还有 ${holders.length} 个用户`, { userCount: holders.length })
-    await wait(null)
     holders.forEach(user => { user.roleIds = user.roleIds.filter(roleId => roleId !== id); user.roleVersion += 1 })
     db.roles.splice(db.roles.indexOf(role), 1)
     return { id }
@@ -430,6 +445,7 @@ export const api = {
     return wait({ roleId: role.id, version: role.permissionVersion, grants: copy(role.grants), readOnly: role.id === SUPER_ADMIN })
   },
   async saveRoleGrants(id, grants, version, { simulateFailure = false } = {}) {
+    await waitForWrite(400)
     authorize('rbac:role:grant')
     const role = roleById(id) || fail(404, 'NOT_FOUND', '角色不存在')
     if (role.id === SUPER_ADMIN) fail(409, 'PROTECTED_ROLE', '超级管理员角色的授权不能修改')
@@ -445,7 +461,6 @@ export const api = {
       if (!byCode.has(`${systemCode}:${resource}:read`)) fail(400, 'READ_REQUIRED', `${code} 缺少同一功能点的“查看”权限`)
     }
     if (version !== role.permissionVersion) fail(409, 'VERSION_CONFLICT', '该角色的授权已被其他管理员修改，请刷新后重试', { currentVersion: role.permissionVersion })
-    await wait(null, 400)
     if (simulateFailure) fail(500, 'SAVE_FAILED', '模拟保存中途失败：事务已回滚，授权与保存前完全相同')
     role.grants = [...byCode].map(([code, scope]) => ({ code, scope })).sort((a, b) => a.code.localeCompare(b.code))
     role.permissionVersion += 1
@@ -459,7 +474,7 @@ export const api = {
     const rows = functions
       .filter(fn => !systemCode || fn.systemCode === systemCode)
       .filter(fn => !module || fn.module === module)
-      .filter(fn => !text || `${fn.id}${fn.name}${fn.module}${fn.systemCode}:${fn.id}`.toLowerCase().includes(text))
+      .filter(fn => !text || `${fn.id} ${fn.name} ${fn.module} ${actions.map(action => `${fn.systemCode}:${fn.id}:${action.code}`).join(' ')}`.toLowerCase().includes(text))
       .map(fn => ({ ...fn, codes: actions.map(action => `${fn.systemCode}:${fn.id}:${action.code}`), admin: adminMapping[fn.id] || null }))
     return listResponse({ ...paginate(rows, page, pageSize), stats: { systems: systems.length, modules: modules.length, functions: functions.length, permissions: catalogPermissions.length } })
   },

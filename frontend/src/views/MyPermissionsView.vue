@@ -1,6 +1,6 @@
 <script setup>
 // 我的权限（PORTAL-03）：当前用户的全部有效权限、数据范围和来源角色。
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { auth } from '../stores/auth'
 import { describePermission, actionLabel, scopeLabel, systems } from '../api/fixtures/catalog'
 import ScopeTag from '../components/ScopeTag.vue'
@@ -12,11 +12,13 @@ const rows = computed(() => auth.grants.map(grant => {
 }))
 const systemOptions = computed(() => [...systems.filter(item => rows.value.some(row => row.systemCode === item.code)),
   ...(rows.value.some(row => row.systemCode === 'rbac') ? [{ code: 'rbac', name: '管理后台（rbac:*）' }] : [])])
+const searchText = computed(() => keyword.value.trim().toLowerCase())
 const filtered = computed(() => rows.value.filter(row =>
   (!systemCode.value || row.systemCode === systemCode.value) &&
-  (!keyword.value || `${row.code}${row.name}${row.module}`.includes(keyword.value.trim()))))
+  (!searchText.value || `${row.code}${row.name}${row.module}`.toLowerCase().includes(searchText.value))))
 const paged = computed(() => filtered.value.slice((page.value - 1) * size, page.value * size))
 const scopeCounts = computed(() => ['ALL', 'DEPT', 'SELF'].map(scope => ({ scope, count: rows.value.filter(row => row.scope === scope).length })))
+watch(() => filtered.value.length, total => { page.value = Math.min(page.value, Math.max(1, Math.ceil(total / size))) })
 </script>
 
 <template>
@@ -36,7 +38,7 @@ const scopeCounts = computed(() => ['ALL', 'DEPT', 'SELF'].map(scope => ({ scope
     <el-card class="table-card">
       <el-empty v-if="!filtered.length" :description="rows.length ? '暂无匹配权限' : '暂无权限，请联系管理员'" />
       <template v-else>
-        <el-table :data="paged" stripe>
+        <el-table :data="paged" row-key="code" stripe>
           <el-table-column label="权限码" min-width="170"><template #default="{ row }"><code>{{ row.code }}</code></template></el-table-column>
           <el-table-column prop="systemName" label="系统" min-width="150" />
           <el-table-column prop="module" label="模块" min-width="130" />
