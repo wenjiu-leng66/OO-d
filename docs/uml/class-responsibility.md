@@ -117,9 +117,14 @@ classDiagram
   RoleMapper ..> RolePermissionPO
   DepartmentMapper ..> DepartmentPO
 
-  Controller ..> ApiException : 抛出
+  AuthController ..> ApiException : 抛出
   GlobalExceptionHandler ..> ErrorVO : 转换
 ```
+
+> 图中只画 `AuthController → ApiException` 一条代表：**所有 Controller 都以同样方式抛出**
+> `ApiException`，由 `GlobalExceptionHandler` 统一转换为 `ErrorVO`。
+> 不写 `Controller ..> ApiException` 是因为 `Controller` 是 `namespace` 而非类，
+> mermaid 10.9.8 在该写法下**解析通过但渲染崩溃**。
 
 ---
 
