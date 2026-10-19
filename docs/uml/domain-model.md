@@ -13,41 +13,41 @@ classDiagram
 
   class Dept {
     +int id
-    +string name 部门全称
-    +string shortName 简称
-    +int parentId 上级部门
-    +DeptType type 总部/总部部门/分公司/分公司部门/项目经理部
-    +int level 层级 1-3
-    +int managerUserId 负责人
-    +depthOf() 子树深度
+    +string name
+    +string shortName
+    +int parentId
+    +DeptType type
+    +int level
+    +int managerUserId
+    +depthOf()
   }
 
   class User {
     +int id
-    +string username 工号
-    +string passwordHash 带算法前缀
+    +string username
+    +string passwordHash
     +string realName
     +int deptId
-    +string phone 可为空且唯一
-    +bool status 启用/停用
-    +bool mustChangePassword 首登必须改密
-    +int roleVersion 角色集合版本
-    +isSuperAdmin() 唯一 admin
+    +string phone
+    +bool status
+    +bool mustChangePassword
+    +int roleVersion
+    +isSuperAdmin()
   }
 
   class Role {
     +int id
-    +string code 唯一编码
+    +string code
     +string name
-    +bool builtin 内置角色不可删
-    +bool status 启用/停用
-    +int permissionVersion 授权版本
-    +isManagement() 管理类角色
+    +bool builtin
+    +bool status
+    +int permissionVersion
+    +isManagement()
   }
 
   class Permission {
     +int id
-    +string code 系统码:功能点:动作
+    +string code
     +int functionId
     +ActionCode action
   }
@@ -60,12 +60,12 @@ classDiagram
   class RolePermission {
     +int roleId
     +int permissionId
-    +DataScope scope 数据范围
+    +DataScope scope
   }
 
   class AppSystem {
     +int id
-    +string code 权限码第一段
+    +string code
     +string name
   }
 
@@ -78,7 +78,7 @@ classDiagram
   class AppFunction {
     +int id
     +int moduleId
-    +string code 权限码第二段
+    +string code
     +string name
   }
 
@@ -104,6 +104,15 @@ classDiagram
     delete
   }
 
+  class DeptType {
+    <<enumeration>>
+    HQ
+    HQ_DEPT
+    BRANCH
+    BRANCH_DEPT
+    PROJECT
+  }
+
   Dept "1" --> "*" Dept : parent/child
   Dept "1" --> "*" User : 所属
   Dept "1" --> "0..1" User : 负责人 managerUserId
@@ -121,6 +130,7 @@ classDiagram
 
   RolePermission --> DataScope : 带范围
   Permission --> ActionCode : 动作
+  Dept --> DeptType : 部门类型
 ```
 
 ---

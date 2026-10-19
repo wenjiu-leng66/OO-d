@@ -3,7 +3,7 @@
 **负责人**：成员 5（胡俊朗）　**依据**：`backend-procedural/` 实际实现与 `Stage1ApiTest` 断言
 **版本**：2026-10-18 集成版（`2954385`）
 
-本文件选取四条最能体现设计取舍的流程：**认证**、**拒绝**、**并发**、**即时生效**。
+本文件选取六条最能体现设计取舍的流程，每条都能在 2—3 分钟内讲完。
 
 ---
 
@@ -35,7 +35,7 @@ sequenceDiagram
     S->>S: session.changeSessionId()<br/>防会话固定攻击
     S->>S: session.setAttribute(userId, credentialVersion)
     S-->>C: Views（仅安全字段，不含 password_hash）
-    C-->>B: 200 + Set-Cookie: JSESSIONID<br/>HttpOnly; SameSite=Lax
+    C-->>B: 200 + Set-Cookie: JSESSIONID<br/>HttpOnly　SameSite=Lax
   end
 
   Note over B,A: ── 首次登录或被重置后，must_change_password=1 ──
@@ -274,7 +274,153 @@ sequenceDiagram
 
 ---
 
-## 5. 四条流程的共性
+## 5. 用户角色整组替换与防死锁
+
+这是全系统唯一需要**显式控制加锁顺序**的地方。
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant B as 管理员
+  participant C as UserController
+  participant S as UserService
+  participant A as AuthorizationService
+  participant RM as RoleMapper
+  participant UM as UserMapper
+
+  B->>C: PUT /users/4/roles<br/>{roleIds, version}
+  C->>S: replaceRoles(session, "4", request)
+
+  S->>A: target(session, "rbac:user:assign-role", "4")
+  Note over A: 认证 + 权限码 + 范围 + 目标<br/>（同第 2 节）
+  A-->>S: 目标用户
+
+  S->>S: protectedAccount(session, target)
+  alt 目标是 admin / 是自己
+    S-->>C: 409 PROTECTED_ACCOUNT
+  end
+
+  S->>S: roleIds 去重检查
+  alt 含重复元素
+    S-->>C: 400 VALIDATION
+  end
+
+  S->>UM: roleIds("4") — 读取替换前的角色
+  UM-->>S: before = {5, 7}
+
+  Note over S: <b>关键：合并「原有 + 新的」并升序排序</b>
+  S->>S: lockIds = TreeSet(before ∪ new)<br/>按数值升序
+  loop 按升序逐个加锁
+    S->>RM: lockById(roleId) — SELECT ... FOR UPDATE
+    alt 角色不存在
+      RM-->>S: 空
+      S-->>C: 400 未知角色
+    end
+  end
+
+  Note over S: 若 A 请求锁 {5,7}、B 请求锁 {7,5}<br/>不排序会各持一把、互相等待 → <b>死锁</b><br/>升序后所有事务加锁顺序一致
+
+  S->>S: 计算 changed = 新增 ∪ 移除
+
+  alt 目标角色含 ADMIN
+    S-->>C: 403 不能把超管角色授予他人
+  end
+  alt 操作者不是超管，且 changed 含管理角色
+    S-->>C: 403 只能分配或撤销业务角色
+  end
+
+  S->>UM: compareAndIncrement("4", version)
+  alt 版本已变
+    UM->>UM: currentRoleVersion("4")
+    S-->>C: <b>409 VERSION_CONFLICT</b><br/>{currentVersion}
+  else 版本匹配
+    S->>UM: replaceRoles("4", roleIds)
+    UM-->>S: 完成
+    S-->>C: 200 {roleIds, version: N+1}
+  end
+```
+
+### 为什么必须按 ID 升序加锁
+
+| 场景 | 不排序 | 升序后 |
+|---|---|---|
+| A 请求锁 {5, 7} | A 持有 5，等 7 | A 先锁 5 再锁 7 |
+| B 请求锁 {7, 5} | B 持有 7，等 5 | B 也先锁 5 再锁 7 |
+| 结果 | **互相等待 → 死锁** | 一方等锁释放，顺序推进 |
+
+代码中的实现：
+
+```java
+// UserService.replaceRoles
+Set<String> lockIds = new TreeSet<>(Comparator.comparingLong(Long::parseLong));
+lockIds.addAll(before);
+lockIds.addAll(r.roleIds());
+for (String roleId : lockIds) roles.lockById(roleId);
+```
+
+> 对应测试：`simultaneousCasHasExactlyOneWinner`（并发断言 `[200, 409]`）、
+> `selfAndUniqueAdminProtection`（管理员与自身保护）。
+
+---
+
+## 6. 角色删除与确认机制
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant B as 管理员
+  participant C as RoleController
+  participant S as RoleService
+  participant A as AuthorizationService
+  participant RM as RoleMapper
+  participant UM as UserMapper
+
+  B->>C: DELETE /roles/9?confirm=false
+  C->>S: delete(session, "9", confirm)
+
+  S->>A: require(session, "rbac:role:delete")
+  A-->>S: 通过
+
+  S->>RM: <b>lockById("9")</b> — 先加锁再判断
+  alt 角色不存在
+    S-->>C: 404 NOT_FOUND
+  end
+
+  alt builtin = 1
+    S-->>C: <b>409</b> 内置角色不可删除
+  end
+  alt code = ADMIN
+    S-->>C: <b>409</b> 超管角色不可删除
+  end
+
+  S->>RM: lockedUserIds("9")
+  RM-->>S: 仍引用该角色的用户列表
+
+  alt 有用户 且 confirm = false
+    S-->>C: <b>409 ROLE_HAS_USERS</b>
+    Note over B: 前端提示"该角色仍有 N 个用户，<br/>确认删除？"
+  else 无用户 或 confirm = true
+    S->>RM: 删除 sys_role
+    S->>RM: 级联删除 sys_role_permission<br/>与 sys_user_role
+    S->>UM: <b>逐一对受影响用户递增 role_version</b>
+    S-->>C: 204 No Content
+  end
+```
+
+### 三个容易讲错的地方
+
+| 点 | 正确说法 |
+|---|---|
+| **先加锁再判断** | 不是「查完再删」，而是先 `FOR UPDATE`，避免判断与删除之间被并发分配 |
+| **confirm 是第二道闸** | 有成员不是直接拒绝，而是**要求调用方确认**；确认后才连带清理 |
+| **删除要动用户版本号** | 受影响用户的角色集合变了，其手里的旧 `version` 必须失效，否则并发修改会绕过检查 |
+
+> 对应测试：`roleCrudStatusDeleteAndBuiltinGuards`（409 → 204 且用户版本递增）、
+> `concurrentAssignmentMakesUnconfirmedRoleDeleteRefuse`（并发分配使未确认删除被拒）。
+
+---
+
+## 7. 六条流程的共性
 
 | 共性 | 含义 |
 |---|---|
@@ -283,3 +429,5 @@ sequenceDiagram
 | 失败信息最小化 | 统一 401、统一 403、`details` 不带对象字段 |
 | 事务只在 Service 层 | Controller 无 `@Transactional` |
 | 版本号由数据库 CAS | 不靠应用层判断，避免竞态 |
+| 需要多行加锁时统一升序 | 消除循环等待，避免死锁 |
+| 删除/替换都递增关联版本号 | 让并发的旧版本请求被 409 拒绝 |
