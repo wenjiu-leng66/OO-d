@@ -8,7 +8,7 @@ import { permissionScope } from '../policy-adapter'
 import { scopeLabel } from '../api/fixtures/catalog'
 import ScopeTag from '../components/ScopeTag.vue'
 
-const loading = ref(false); const failed = ref(false); const saving = ref(false)
+const loading = ref(true); const failed = ref(false); const saving = ref(false)
 const keyword = ref(''); const page = ref(1); const size = 8
 const result = ref({ items: [], total: 0, readScope: null, editScope: null })
 const editing = ref(null); const formRef = ref()

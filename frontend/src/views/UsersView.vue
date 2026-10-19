@@ -9,7 +9,7 @@ import { hasPermission, permissionScope } from '../policy-adapter'
 import { scopeLabel } from '../api/fixtures/catalog'
 
 const route = useRoute()
-const loading = ref(false); const saving = ref(false); const failed = ref(false)
+const loading = ref(true); const saving = ref(false); const failed = ref(false)
 const filters = reactive({ departmentId: '', keyword: '', roleId: '', status: '' })
 const page = ref(1); const size = 8
 const result = ref({ items: [], total: 0 })
@@ -41,7 +41,8 @@ async function openForm(user = null) {
   editingId.value = user?.id || null
   Object.assign(form, user ? { username: user.username, name: user.name, departmentId: user.departmentId, position: user.position, phone: user.phone, email: user.email }
     : { username: '', name: '', departmentId: '', position: '', phone: '', email: '' })
-  formDepartments.value = await api.departmentOptions(user ? 'rbac:user:update' : 'rbac:user:create')
+  const permission = user ? 'rbac:user:update' : 'rbac:user:create'
+  formDepartments.value = await api.departmentOptions(permission)
   formVisible.value = true
 }
 async function submitForm() {
@@ -101,9 +102,11 @@ async function saveRoles() {
 }
 
 onMounted(async () => {
-  const [deptOptions, roleList] = await Promise.all([api.departmentOptions('rbac:user:read'), can('rbac:role:read') ? api.listRoles() : []])
-  departments.value = deptOptions; roles.value = roleList
-  await load()
+  await Promise.allSettled([
+    api.departmentOptions('rbac:user:read').then(value => { departments.value = value }),
+    (can('rbac:role:read') ? api.listRoles() : Promise.resolve([])).then(value => { roles.value = value }),
+    load()
+  ])
   if (route.query.create && can('rbac:user:create')) openForm()
 })
 </script>

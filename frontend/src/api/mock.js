@@ -381,7 +381,6 @@ export const api = {
     return db.departments.filter(dept => departmentAllowed(scope, actor, dept.id))
       .map(dept => ({ id: dept.id, name: dept.name, path: departmentPath(dept.id), type: dept.type }))
   },
-
   // 角色管理（ROLE-01 ~ 04）
   async listRoles() {
     authorize('rbac:role:read')
