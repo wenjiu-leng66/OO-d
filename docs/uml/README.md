@@ -1,12 +1,31 @@
 # UML 与架构资料
 
-保留图的可编辑源文件。推荐按阶段命名和维护，例如 `rbac0-use-cases`、`authorization-sequence`、`role-hierarchy-design`。
+保留图的可编辑源文件（全部用 mermaid，GitHub 可直接渲染）。图中的关系、多重性和调用应与实现对应。
 
-需要准备：用例图、领域模型、设计类图、关键序列图、ER 图、组件图和部署图。老师具体要求优先。
+## 已有资料
 
-分析类图表达业务概念，设计类图表达软件职责，ER 图表达持久化。图中的关系、多重性和调用应与实现对应。
+| 图 | 文件 | 归属 | 状态 |
+|---|---|---|---|
+| **领域模型**（分析类图） | [domain-model.md](domain-model.md) | 成员 5 | ✅ 2026-10-18 |
+| **设计类图与类职责** | [class-responsibility.md](class-responsibility.md) | 成员 5 | ✅ 2026-10-18 |
+| **关键序列图**（登录/拒绝/并发/即时生效） | [sequence-diagrams.md](sequence-diagrams.md) | 成员 5 | ✅ 2026-10-18 |
+| ER 图 | [数据库数据字典](../database/data-dictionary.md) | 成员 1 | ✅ |
+| 概念架构图 | 本文件下方 | — | ✅ |
 
-当前仅有以下概念架构，未代表已经部署：
+三份成员 5 的图均标注了**与代码、测试的对应关系**，可据此回到 `backend-procedural/` 与
+`Stage1ApiTest` 核对，而不是脱离实现的示意图。
+
+## 尚未提供
+
+| 图 | 说明 | 建议归属 |
+|---|---|---|
+| 用例图 | 管理员 / 部门管理员 / 普通员工 × 各自的用例边界 | 待认领（需求侧） |
+| 组件图（详细） | 现有概念图偏简略，缺少 Vue / Spring / MySQL 的组件接口 | 待认领 |
+| 部署图 | `deploy/compose.yaml` 三服务、端口、命名卷 | 部署负责人 |
+
+> 本表只记录现状，不代表已经安排。补图时请同步更新本文件。
+
+## 概念架构（不代表已部署）
 
 ```mermaid
 flowchart LR
@@ -14,3 +33,10 @@ flowchart LR
     Backend --> Auth[认证与授权规则]
     Auth --> DB[(独立 MySQL 数据库)]
 ```
+
+## 维护约定
+
+- 图与代码不一致时，**以代码为准**并更新图，不能反过来迁就图。
+- 新增接口或修改数据模型时，同步检查 [domain-model.md](domain-model.md) 与
+  [class-responsibility.md](class-responsibility.md) 是否需要更新。
+- 序列图只画**关键路径**（有并发、有失败分支、有安全含义的），不追求覆盖每个接口。
