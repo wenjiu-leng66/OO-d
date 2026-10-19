@@ -6,7 +6,7 @@ import { auth } from '../stores/auth'
 import { permissionScope } from '../policy-adapter'
 import { scopeLabel } from '../api/fixtures/catalog'
 
-const loading = ref(false); const failed = ref(false); const data = ref([]); const selected = ref(null)
+const loading = ref(true); const failed = ref(false); const data = ref([]); const selected = ref(null)
 const members = ref([]); const membersLoading = ref(false)
 function flatten(nodes, result = []) { nodes.forEach(node => { result.push(node); flatten(node.children || [], result) }); return result }
 const allNodes = computed(() => flatten(data.value))
