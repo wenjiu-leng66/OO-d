@@ -23,11 +23,13 @@
 ```sh
 cp deploy/.env.example deploy/.env
 chmod 600 deploy/.env
-# 用编辑器填写三个不同的随机密码；HTTP_PORT=8080；RBAC_DEMO_ENABLED=true
+# 填写密码（首次部署为三个不同的随机密码；2026-10-21 起演示环境统一为同一密码）；HTTP_PORT=8080；RBAC_DEMO_ENABLED=true
 sh scripts/deploy-stage1.sh
 ```
 
 首次部署时为降低 3 Mbps 带宽下的并发下载压力，先顺序预拉了 `mysql:8.4`、`maven:3.9.11-eclipse-temurin-21`、`eclipse-temurin:21-jre-jammy`、`node:22-alpine`、`nginx:stable-alpine` 五个镜像。Docker Hub 直连不可达，使用可达的公共镜像源完成拉取；该设置只影响服务器拉取方式，不改变应用代码。
+
+2026-10-21 按演示便利要求，将 SSH、MySQL 应用账号/root 与 `RBAC_INITIAL_PASSWORD` 统一为同一演示密码，并重置全部预置账号的密码哈希；调整后重新执行冒烟测试，27 项通过、0 失败，三个容器保持 healthy。该统一密码只用于课程合成演示，接入真实数据前必须更换。
 
 ## 自动检查实际结果
 
