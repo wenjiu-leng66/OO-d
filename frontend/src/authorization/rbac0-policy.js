@@ -6,10 +6,10 @@
 (function (root, createPolicy) {
   'use strict';
   var policy = createPolicy();
+  // 浏览器（经典脚本或 Vite/CommonJS 打包）都必须能通过 globalThis.Rbac0 读到策略。
+  root.Rbac0 = policy;
   if (typeof module === 'object' && module.exports) {
     module.exports = policy;
-  } else {
-    root.Rbac0 = policy;
   }
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
