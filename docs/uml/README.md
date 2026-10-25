@@ -1,88 +1,12 @@
 # 模型与设计图
 
-> **本目录回答一个问题**：这个系统是怎么从需求一步步变成设计的。
-> 全部图用 mermaid 源文件保存，GitHub / Gitee 可直接渲染。
-
-成员 5 的交付范围是**领域模型、类职责、序列图**（[责任表](../planning/team.md)）；
-用例图与活动图作为需求与流程的支撑材料保留。
-
----
-
-## 1. 模型总览
-
-| 视图 | 文件 | 图数 | 回答什么问题 | 讲解优先级 |
-|---|---|---|---|---|
-| **需求支撑**：用例图 | [use-cases.md](use-cases.md) | 1 | 谁用系统、边界在哪 | 背景 |
-| **分析模型**：领域模型 | [domain-model.md](domain-model.md) | 1 | 有哪些业务概念、什么关系 | **核心** |
-| **设计模型**：类职责 | [class-responsibility.md](class-responsibility.md) | 1 | 概念由谁负责、谁依赖谁 | **核心** |
-| **行为模型**：序列图 | [sequence-diagrams.md](sequence-diagrams.md) | 6（4 核心 + 2 附录） | 一次用例中对象怎么协作 | **核心** |
-| **行为模型**：状态图 | [state-diagrams.md](state-diagrams.md) | 2 | 对象状态怎么迁移、状态如何影响权限 | **核心** |
-| **流程支撑**：活动图 | [activity-diagrams.md](activity-diagrams.md) | 2 | 多重判断在哪一步被拒绝 | 支撑 |
-| 数据模型：ER 图 | [数据字典](../database/data-dictionary.md) | 1 | 概念怎么落到表 | 支撑（成员 1） |
-
----
-
-## 2. 推荐讲解顺序（5 分钟）
-
-1. **需求一句话**：一期 RBAC0，用户通过角色获得权限，默认拒绝，范围分全部/本部门/本人。
-2. **领域模型**：从需求抽出 10 个概念——用户、角色、权限、部门、系统/模块/功能点/动作、授予关系、数据范围。
-3. **类职责**：用边界—控制—实体说明这些概念在软件里由谁负责；鉴权集中在 `AuthorizationService`。
-4. **一条序列图**：选「受保护操作与越权拒绝」，讲清认证 → 权限码 → 范围 → 目标四步短路。
-5. **状态图**：补一句「用户和角色都有状态，状态决定允许的操作」。
-
-被追问时再展开：配置角色权限（版本冲突）、权限变更即时生效、角色删除。
-
----
-
-## 3. 图例与约定
-
-| 图类型 | mermaid 写法 | 说明 |
+| 图 | 文件 | 对应需求 |
 |---|---|---|
-| 领域模型 / 类图 | `classDiagram` | 标准 UML 类图，含多重性、枚举、备注 |
-| 序列图 | `sequenceDiagram` | 标准 UML 顺序图，含 `alt` 分支 |
-| 状态图 | `stateDiagram-v2` | 标准 UML 状态机 |
-| 用例图 | `flowchart` 近似 | mermaid 没有原生用例图，用「参与者—用例—系统边界」表达同样语义 |
-| 活动图 | `flowchart` 近似 | 表达判断分支；mermaid 无泳道 |
+| 领域模型 | [domain-model.md](domain-model.md) | USER / ROLE / DEPT / CAT / GRANT / AUTHZ |
+| 类职责 | [class-responsibility.md](class-responsibility.md) | 后端全部用例 |
+| 序列图（6 条） | [sequence-diagrams.md](sequence-diagrams.md) | LOGIN / USER / GRANT / AUTHZ / ROLE |
+| 状态图（2 张） | [state-diagrams.md](state-diagrams.md) | LOGIN-05 / USER / ROLE |
+| 用例图（支撑） | [use-cases.md](use-cases.md) | 需求范围 |
+| 活动图（支撑） | [activity-diagrams.md](activity-diagrams.md) | AUTHZ / ROLE-03 |
 
-**约定**：
-
-- 类名用英文（与代码一致），业务含义用中文写在下方的说明表里；
-- 图中不出现密码哈希等实现字段——那是实现细节，不是领域概念；
-- 序列图只画关键路径，不覆盖每个接口。
-
----
-
-## 4. 需求追溯
-
-| 需求组 | 模型元素 | 主要图 |
-|---|---|---|
-| LOGIN-01~05 | User、UserStatus、会话 | 领域模型、状态图、序列图 1 |
-| USER-01~07 | User、Department、保护规则 | 领域模型、序列图 2/3 |
-| ROLE-01~04 | Role、RoleStatus、内置角色 | 领域模型、状态图、序列图 6 |
-| DEPT-01/02 | Department 自继承、DeptType | 领域模型 |
-| CAT-01/02 | System → Module → FunctionPoint → Permission | 领域模型 |
-| GRANT-01~05 | UserRoleAssignment、RolePermissionGrant、DataScope | 领域模型、序列图 2/4/5 |
-| AUTHZ-01~03 | Permission、DataScope、Department 子树 | 领域模型、序列图 3、活动图 1 |
-
-逐条覆盖情况见 [需求覆盖表](../stage1/requirement-coverage.md)。
-
----
-
-## 5. 已知缺口
-
-| 缺什么 | 说明 |
-|---|---|
-| 组件图 | 尚未提供；现有概念架构图偏简略 |
-| 部署图 | `deploy/compose.yaml` 三服务，尚未画成 UML 部署图 |
-| 用例描述 | 完整用例模板见 [用例模板](../requirements/use-cases.md)，目前只有简述 |
-
-这三项不属于成员 5 的责任范围，如实标注，不用示意图冒充完整模型。
-
----
-
-## 6. 维护约定
-
-- **图与代码不一致时，以需求和代码为准**，先判断是模型漏了约束，还是实现偏离了需求，再更新图。
-- 新增接口或修改数据模型时，同步检查领域模型、类职责与序列图。
-- 序列图只画**有并发、有失败分支、有安全含义**的流程。
-- 每个图必须能回答一个问题；回答不了问题的图不放进主目录。
+全部为 mermaid 源文件，GitHub / Gitee 直接渲染。
