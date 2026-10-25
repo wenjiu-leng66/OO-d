@@ -1,217 +1,208 @@
 # 设计类图与类职责
 
-**负责人**：成员 5（胡俊朗）　**依据**：`backend-procedural/src/main/java/com/municipal/rbac/procedural/` 实际代码
-**版本**：2026-10-18 集成版（`2954385`）
+**负责人**：成员 5（胡俊朗）　**范围**：一期 RBAC0
+**依据**：[需求规格](../requirements/req-spec.md)、[领域模型](domain-model.md)、`backend-procedural/` 实现
+
+> **这张图回答什么**：领域模型里的概念，在软件里由**谁**来负责；类与类之间允许谁依赖谁。
+> 它不追求列全所有类——完整清单在 §6，主图只画**关键设计类**。
 
 ---
 
-## 1. 分层结构
+## 1. 设计方法：边界—控制—实体
+
+| 类的类型 | 在本项目里 | 职责 | 设计依据 |
+|---|---|---|---|
+| **边界类**（boundary） | Controller | 接收 HTTP、绑定并校验 DTO、把结果转成响应 | 一个用例的入口 |
+| **控制类**（control） | Service | 编排用例：认证、鉴权、业务规则、事务 | GRASP 的**控制器**：谁负责处理这个用例 |
+| **实体类**（entity） | PO / 领域概念 | 承载业务数据与状态 | 领域模型 §2 |
+| **仓储类**（repository） | Mapper | 只做参数化 SQL，屏蔽数据库 | GRASP 的**间接**：把持久化隔离出去 |
+
+**职责分配原则**（GRASP）：
+
+- **信息专家**：权限计算放在 `AuthorizationService`，因为它拥有角色、授权、范围所需的全部信息；
+- **低耦合 / 高内聚**：Controller 不直接碰 Mapper，鉴权不散落在每个 Service；
+- **控制器**：每个用例由一个 Service 统一编排；
+- **防止变异**：稳定权限码、DTO/VO 分离、Views 不直接序列化 PO。
+
+---
+
+## 2. 关键设计类图
 
 ```mermaid
 classDiagram
   direction TB
 
-  namespace Controller {
-    class AuthController
-    class MeController
-    class UserController
-    class RoleController
-    class DepartmentController
-    class CatalogController
-    class PortalController
-    class HealthController
+  class AuthController {
+    <<boundary>>
+  }
+  class UserController {
+    <<boundary>>
+  }
+  class RoleController {
+    <<boundary>>
+  }
+  class DepartmentController {
+    <<boundary>>
+  }
+  class PortalController {
+    <<boundary>>
   }
 
-  namespace Service {
-    class AuthService
-    class AuthorizationService
-    class MeService
-    class UserService
-    class RoleService
-    class DepartmentService
-    class CatalogService
-    class PortalService
-    class LedgerService
-    class DataInitializer
-    class EffectivePermissions
+  class AuthService {
+    <<control>>
+  }
+  class UserService {
+    <<control>>
+  }
+  class RoleService {
+    <<control>>
+  }
+  class DepartmentService {
+    <<control>>
+  }
+  class PortalService {
+    <<control>>
+  }
+  class AuthorizationService {
+    <<control>>
   }
 
-  namespace Mapper {
-    class UserMapper
-    class RoleMapper
-    class DepartmentMapper
-    class CatalogMapper
+  class UserMapper {
+    <<repository>>
+  }
+  class RoleMapper {
+    <<repository>>
+  }
+  class DepartmentMapper {
+    <<repository>>
   }
 
-  namespace Data {
-    class UserPO
-    class RolePO
-    class RolePermissionPO
-    class DepartmentPO
-    class Requests
-    class Views
-    class ErrorVO
+  class User {
+    <<entity>>
+  }
+  class Role {
+    <<entity>>
+  }
+  class Permission {
+    <<entity>>
+  }
+  class Department {
+    <<entity>>
   }
 
-  namespace CrossCutting {
-    class ApiException
-    class GlobalExceptionHandler
-    class SecurityConfig
-    class BrowserSecurityConfig
+  class ApiException {
+    <<exception>>
+  }
+  class GlobalExceptionHandler {
+    <<boundary>>
   }
 
   AuthController --> AuthService
-  AuthController --> AuthorizationService
-  MeController --> MeService
-  MeController --> AuthorizationService
-
   UserController --> UserService
-  UserController --> AuthorizationService
-  UserController --> LedgerService
-
   RoleController --> RoleService
-  RoleController --> AuthorizationService
-
   DepartmentController --> DepartmentService
-  DepartmentController --> AuthorizationService
-
-  CatalogController --> CatalogService
-  CatalogController --> AuthorizationService
-
   PortalController --> PortalService
-  PortalController --> AuthorizationService
+
+  AuthController ..> AuthorizationService
+  UserController ..> AuthorizationService
+  RoleController ..> AuthorizationService
+  DepartmentController ..> AuthorizationService
+  PortalController ..> AuthorizationService
+
+  AuthService --> UserMapper
+  UserService --> UserMapper
+  UserService --> RoleMapper
+  RoleService --> RoleMapper
+  DepartmentService --> DepartmentMapper
+  PortalService --> UserMapper
 
   AuthorizationService --> UserMapper
   AuthorizationService --> RoleMapper
   AuthorizationService --> DepartmentMapper
-  AuthorizationService ..> EffectivePermissions
 
-  UserService --> UserMapper
-  UserService --> RoleMapper
-  UserService --> AuthorizationService
+  UserService ..> User
+  RoleService ..> Role
+  AuthorizationService ..> Permission
+  DepartmentService ..> Department
 
-  RoleService --> RoleMapper
-  RoleService --> AuthorizationService
+  AuthService ..> ApiException
+  UserService ..> ApiException
+  RoleService ..> ApiException
+  GlobalExceptionHandler ..> ApiException
 
-  DepartmentService --> DepartmentMapper
-  DepartmentService --> AuthorizationService
-
-  CatalogService --> CatalogMapper
-  CatalogService --> AuthorizationService
-
-  PortalService --> CatalogMapper
-  PortalService --> AuthorizationService
-
-  LedgerService --> UserMapper
-  LedgerService --> AuthorizationService
-
-  MeService --> UserMapper
-  MeService --> RoleMapper
-  MeService --> AuthorizationService
-
-  AuthService --> UserMapper
-  AuthService --> AuthorizationService
-
-  UserMapper ..> UserPO
-  RoleMapper ..> RolePO
-  RoleMapper ..> RolePermissionPO
-  DepartmentMapper ..> DepartmentPO
-
-  AuthController ..> ApiException : 抛出
-  GlobalExceptionHandler ..> ErrorVO : 转换
+  note for AuthorizationService "认证 → 权限码 → 数据范围 → 目标对象，四步短路"
+  note for UserMapper "所有查询先裁剪范围，再筛选与分页"
 ```
-
-> 图中只画 `AuthController → ApiException` 一条代表：**所有 Controller 都以同样方式抛出**
-> `ApiException`，由 `GlobalExceptionHandler` 统一转换为 `ErrorVO`。
-> 不写 `Controller ..> ApiException` 是因为 `Controller` 是 `namespace` 而非类，
-> mermaid 10.9.8 在该写法下**解析通过但渲染崩溃**。
 
 ---
 
-## 2. 各层职责
+## 3. 类职责（CRC 表）
 
-### Controller 层（8 个）
+> CRC = Class / Responsibility / Collaborator。这是回答「这个类为什么存在」的标准格式。
+
+| 类 | 职责（Responsibility） | 协作者（Collaborator） | 对应需求 |
+|---|---|---|---|
+| `AuthorizationService` | 会话有效性、首次改密限制、权限并集、范围合并、目标检查 | UserMapper、RoleMapper、DepartmentMapper | AUTHZ-01~03、GRANT-04 |
+| `AuthService` | 登录、退出、修改密码 | UserMapper、AuthorizationService | LOGIN-01~05 |
+| `UserService` | 范围内用户增删改查、启停、重置、账号保护、角色整组替换 | UserMapper、RoleMapper、AuthorizationService | USER-01~07、GRANT-01 |
+| `RoleService` | 角色增删改查、启停、保护规则、授权整组替换、成员查询 | RoleMapper、UserMapper、AuthorizationService | ROLE-01~04、GRANT-02 |
+| `DepartmentService` | 部门树、负责人、员工数、下级成员 | DepartmentMapper、AuthorizationService | DEPT-01/02 |
+| `PortalService` | 按查看权限生成菜单、功能点六动作状态 | UserMapper、RoleMapper、AuthorizationService | PORTAL-01~06 |
+| `UserMapper` | 用户与用户角色关联的参数化 SQL | 数据库 | USER、GRANT |
+| `RoleMapper` | 角色、角色授权、行锁与版本号的 SQL | 数据库 | ROLE、GRANT |
+| `DepartmentMapper` | 部门树与成员查询的 SQL | 数据库 | DEPT |
+
+---
+
+## 4. 分层职责
+
+### 边界层（Controller，8 个）
 
 **只做三件事**：接收 HTTP、绑定并校验 DTO、调用 Service。
 **不做**：业务判断、权限计算、SQL。
 
-| 类 | 职责 | 主要端点 |
-|---|---|---|
-| `AuthController` | 登录、退出、改密 | `POST /auth/login`、`/auth/logout`、`PUT /me/password` |
-| `MeController` | 本人信息与有效权限 | `GET /me`、`GET /me/permissions` |
-| `UserController` | 用户增删改查、启停、重置、角色替换 | `/users/**` |
-| `RoleController` | 角色增删改查、启停、授权替换、成员 | `/roles/**` |
-| `DepartmentController` | 部门树、部门成员（含下级） | `/departments/**` |
-| `CatalogController` | 系统/模块/功能点目录、全局统计 | `/catalog/**` |
-| `PortalController` | 门户菜单、功能点动作状态 | `/portal/**` |
-| `HealthController` | 健康检查 | `/api/v1/health` |
+| 类 | 主要端点 |
+|---|---|
+| `AuthController` | `POST /auth/login`、`/auth/logout`、`PATCH /me/password` |
+| `MeController` | `GET /me`、`GET /me/permissions` |
+| `UserController` | `/users/**` |
+| `RoleController` | `/roles/**` |
+| `DepartmentController` | `/departments/**` |
+| `CatalogController` | `/catalog/**` |
+| `PortalController` | `/portal/**` |
+| `HealthController` | `/api/v1/health` |
 
-### Service 层（10 个）
+### 控制层（Service，10 个）
 
 **业务逻辑与事务边界的唯一位置。**
 
-| 类 | 行数 | 职责 |
-|---|---|---|
-| `UserService` | 237 | 范围内查询/增改删、停用/重置、账号保护、**用户角色原子替换** |
-| `RoleService` | 190 | 角色管理、保护/删除确认、成员查询、**角色授权原子替换** |
-| `CatalogService` | 149 | 目录筛选/分页/全局统计、兼容权限与资源查询 |
-| `AuthorizationService` | 145 | **会话有效性、改密限制、权限并集、管理码映射、范围与目标检查** |
-| `MeService` | 100 | 本人安全字段、有效权限及来源角色 |
-| `PortalService` | 96 | 按 read 权限生成菜单、功能点六动作状态 |
-| `DepartmentService` | 96 | 只读树、负责人关联、员工数与全部下级成员 |
-| `LedgerService` | 95 | 按 `hr:f046` 范围查询、仅允许改电话/邮箱 |
-| `AuthService` | 72 | 工号/手机号登录、通用错误、改密、退出 |
-| `EffectivePermissions` | 8 | 权限并集的值对象 |
+| 类 | 职责 |
+|---|---|
+| `AuthorizationService` | 会话、权限并集、范围与目标检查 |
+| `AuthService` | 登录、退出、改密 |
+| `UserService` | 用户管理与角色替换 |
+| `RoleService` | 角色管理与授权替换 |
+| `DepartmentService` | 部门树与成员 |
+| `CatalogService` | 目录查询与统计 |
+| `PortalService` | 门户菜单与功能点动作 |
+| `LedgerService` | 员工台账查看与编辑 |
+| `MeService` | 本人信息与有效权限 |
+| `EffectivePermissions` | 权限并集的值对象 |
 
-### Mapper 层（4 个）
+### 仓储层（Mapper，4 个）
 
-**只写参数化 SQL，不含业务判断。** 用 `JdbcTemplate`，不引入 ORM。
+**只写参数化 SQL，不含业务判断。**
 
 | 类 | 负责的表 |
 |---|---|
 | `UserMapper` | `sys_user`、`sys_user_role` |
 | `RoleMapper` | `sys_role`、`sys_role_permission` |
 | `DepartmentMapper` | `sys_dept` |
-| `CatalogMapper` | `app_system` / `app_module` / `app_function` / `sys_action` / `sys_permission` |
-
-### 数据载体
-
-| 类 | 用途 |
-|---|---|
-| `UserPO` / `RolePO` / `RolePermissionPO` / `DepartmentPO` | 数据库行映射 |
-| `Requests` | 入站 DTO（含校验注解） |
-| `Views` | **出站视图**——显式构造，保证不泄漏 `password_hash` |
-| `ErrorVO` | 统一错误包络 |
-
-> `Views` 的存在是一条安全边界：**绝不直接序列化 PO**，否则密码哈希会随响应泄漏。
+| `CatalogMapper` | 目录与权限相关的 5 张表 |
 
 ---
 
-## 3. AuthorizationService 的职责全景
-
-这是整个后端最关键的类，所有 Controller 都依赖它。
-
-| 方法 | 作用 |
-|---|---|
-| `current(session)` | 取当前登录用户 |
-| `requireUserId(session)` | 仅取用户 ID，未登录抛 401 |
-| `ready(session)` | 会话有效 **且** 已完成首次改密 |
-| `effectivePermissions(userId)` | 计算权限并集（角色启用 + 范围取最宽） |
-| `require(session, code)` | 要求某权限码，否则 403 |
-| `target(session, code, id)` | 要求权限 **且** 目标在该权限范围内 |
-| `visible(actor, scope)` | 返回 `Predicate<UserPO>`，用于**先裁剪再分页** |
-| `covers(actor, scope, target)` | 单个目标是否在范围内 |
-| `coversDepartment(actor, scope, deptId)` | 部门是否在范围内（DEPT 含子树） |
-| `superAdmin(user)` / `adminRole(role)` | 保护判定 |
-| `widerScope(a, b)` | `ALL > DEPT > SELF` 合并 |
-| `managementCodes(code)` | 派生管理类权限码 |
-
-**设计意图**：把「认证 → 权限码 → 范围 → 目标」四步集中成一个可复用流水线，
-避免每个 Service 各写一遍导致口径不一致。
-
----
-
-## 4. 依赖规则（架构约束）
+## 5. 依赖规则（架构约束）
 
 | 规则 | 说明 |
 |---|---|
@@ -221,13 +212,35 @@ classDiagram
 | 权限判断**只能**在 `AuthorizationService` | 客户端传来的角色/权限不参与鉴权 |
 | 事务注解**只在** Service 层 | Controller 无 `@Transactional` |
 
-违反上述任一条都会破坏可测试性——现有 29 项集成测试依赖这些边界。
+违反任一条都会破坏可测试性——现有 29 项集成测试依赖这些边界。
 
 ---
 
-## 5. 与测试的对应
+## 6. 完整类清单（附录）
 
-`Stage1ApiTest` 是端到端的集成测试（`MockMvc` + 真实 Spring 上下文 + H2），
-按**接口**而非按类组织用例，因此覆盖的是「Controller → Service → Mapper → DB」整条链路。
+主图只画关键类。完整清单如下，供查漏：
 
-测试方法名与复核项的对应见 [成员5 后端复核记录](../testing/member5-backend-review.md#3-八项重点复核逐项结果)。
+| 层 | 类 |
+|---|---|
+| Controller（8） | AuthController、MeController、UserController、RoleController、DepartmentController、CatalogController、PortalController、HealthController |
+| Service（10） | AuthService、AuthorizationService、MeService、UserService、RoleService、DepartmentService、CatalogService、PortalService、LedgerService、EffectivePermissions |
+| Mapper（4） | UserMapper、RoleMapper、DepartmentMapper、CatalogMapper |
+| 数据载体 | UserPO、RolePO、RolePermissionPO、DepartmentPO、Requests、Views、ErrorVO |
+| 横切 | ApiException、GlobalExceptionHandler、SecurityConfig、BrowserSecurityConfig |
+
+> `Views` 是一条安全边界：**绝不直接序列化 PO**，否则密码哈希会随响应泄漏。
+
+---
+
+## 7. 与需求、测试的对应
+
+| 需求 | 设计类 | 测试 |
+|---|---|---|
+| LOGIN-01~05 | AuthController、AuthService、UserMapper | `credentialFailuresAreIndistinguishable`、`firstLoginMustChangeAndChecksOldPassword` |
+| USER-01~07 | UserController、UserService、RoleMapper | `createUniqueUserEditResetAndDeleteManagerReference`、`selfAndUniqueAdminProtection` |
+| ROLE-01~04 | RoleController、RoleService、RoleMapper | `roleCrudStatusDeleteAndBuiltinGuards` |
+| GRANT-01~05 | UserService、RoleService、AuthorizationService | `userRoleVersionConflictAndDuplicateValidation`、`simultaneousCasHasExactlyOneWinner` |
+| AUTHZ-01~03 | AuthorizationService、DepartmentMapper | `ledgerSelfScopeAndUnknownFieldProtection`、`departmentUserFiltersCannotEscapeScope` |
+| PORTAL-01~06 | PortalController、PortalService | `portalCatalogAndRoleSourcesAreComplete` |
+
+测试方法名与复核项的完整对照见 [成员5 后端复核记录](../testing/member5-backend-review.md)。
