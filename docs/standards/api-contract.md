@@ -6,7 +6,7 @@
 
 - 路径前缀 `/api/v1`，JSON。成功直接返回对象或数组；分页为 `{items, page, pageSize, total}`，页码从 1 开始，默认每页 20，最大 100。删除成功为 HTTP 204，无响应体。
 - 身份使用服务端 `HttpSession`，Cookie 名 `JSESSIONID`，`HttpOnly`、`SameSite=Lax`；HTTPS 部署启用 `Secure`。浏览器同源发送 Cookie；登录成功轮换会话 ID，退出使旧会话失效。响应不返回令牌。
-- 工号字段统一 `username`。ID 一律为字符串。用户状态 `ENABLED / DISABLED`；角色状态 `enabled` 布尔值；部门类型 `HQ / HQ_DEPT / BRANCH / BRANCH_DEPT / PROJECT`。
+- 用户资料中的工号字段统一 `username`；登录请求单独使用`account`接收工号或手机号，并提交`password`。ID 一律为字符串。用户状态 `ENABLED / DISABLED`；角色状态 `enabled` 布尔值；部门类型 `HQ / HQ_DEPT / BRANCH / BRANCH_DEPT / PROJECT`。
 - 不存在账号类别 `accountType`。创建用户不接受角色或初始密码；角色由独立授权接口维护，初始密码由部署环境配置。
 - 失败包络为 `{error: {code, message, requestId, details}}`。`details` 可以为空；不返回密码、哈希、会话或不可见对象资料。
 - 参数错误统一 HTTP 400；未登录 401；无权 403；不存在的角色/目录对象 404；版本冲突、唯一键冲突和保护规则 409；服务端失败 500。
