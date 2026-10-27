@@ -1,98 +1,174 @@
 <#
 .SYNOPSIS
-  DB-side performance evidence on the full course-data MySQL database (stage 1, NFR-PERF-01/02).
-
+  在本机独立全量核对库测量只读 SQL 成本，不执行授权写入。
 .DESCRIPTION
-  Replays, statement by statement, the SQL that backend-procedural issues for:
-    - one authorization decision (AuthorizationService.require / target with DEPT scope)
-    - GET /api/v1/users with departmentId + roleId, page 20
-    - GET /api/v1/ledger/employees (DEPT scope), page 20
-    - PUT /api/v1/roles/{id}/permissions (whole-set replace) inside a transaction that is ROLLED BACK
-  plus EXPLAIN ANALYZE of the key queries and of the single-query view / recursive-CTE forms.
-  Every item: 1 warm-up + N measured runs; median and max are reported.
-
-  Safety: only database rbac_verify_full is accepted; the grant-save runs end with ROLLBACK and a
-  before/after fingerprint of sys_role, sys_role_permission, sys_user and sys_user_role is compared.
-  The password is read with Read-Host -AsSecureString into a temporary --defaults-extra-file that is
-  deleted in finally. Result rows (names, phones) are read into memory and discarded; the JSON output
-  holds only surrogate ids, counts, permission codes, timings and query plans.
+  PowerShell 7+ 与 MySQL 8.4 CLI；Windows/Linux 均可，mysql 可在 PATH 或由 -MySql 指定。
+  凭据仅通过事先配置的 mysql login-path 提供，本脚本不读取口令、不生成临时口令文件。
+  只连接本机 rbac_verify_full，在 READ ONLY 事务中测查询及 EXPLAIN ANALYZE。
+  输出包含计数、代理ID、SQL和计划，不保存查询的员工字段或密码摘要。
+  SELECT * 的结果仍经过客户端内存后丢弃；仅在受控副本上运行，不读取生产资料作演示。
+  此工具不测 Java/HTTP、写入或 COMMIT，也不自动宣布任何端到端性能指标通过。
 #>
 #Requires -Version 7.0
+[CmdletBinding()]
 param(
-  [string]$OutFile = (Join-Path ([IO.Path]::GetTempPath()) 'rbac-full-db-perf.json'),
-  [string]$MySql = 'C:\Program Files\MySQL\MySQL Server 8.4\bin\mysql.exe',
-  [string]$HostName = '127.0.0.1',
-  [int]$Port = 3306,
-  [string]$User = 'root',
-  [int]$Runs = 5
+  [string]$OutFile = '',
+  [string]$MySql = 'mysql',
+  [ValidatePattern('^[A-Za-z0-9_.-]{1,64}$')][string]$LoginPath = 'rbac-verify',
+  [ValidateSet('127.0.0.1', 'localhost', '::1')][string]$HostName = '127.0.0.1',
+  [ValidateRange(1, 65535)][int]$Port = 3306,
+  [ValidateRange(1, 101)][int]$Runs = 5,
+  [ValidateRange(1, 300)][int]$ProcessTimeoutSeconds = 60,
+  [ValidateRange(100, 300000)][int]$QueryTimeoutMs = 30000
 )
-$ErrorActionPreference = 'Stop'
-$Database = 'rbac_verify_full'
-$utf8 = New-Object Text.UTF8Encoding $false
-if (-not (Test-Path $MySql)) { throw "mysql client not found: $MySql" }
 
-$tmp = Join-Path ([IO.Path]::GetTempPath()) ('rbacperf-' + [guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Path $tmp | Out-Null
-$cnf = Join-Path $tmp 'client.cnf'
+function Get-Median([ValidateNotNullOrEmpty()][double[]]$Values) {
+  foreach ($value in $Values) {
+    if ([double]::IsNaN($value) -or [double]::IsInfinity($value) -or $value -lt 0) {
+      throw 'Invalid timing sample.'
+    }
+  }
+  $sorted = @($Values | Sort-Object)
+  $middle = [int][math]::Floor($sorted.Count / 2)
+  if ($sorted.Count % 2) { return $sorted[$middle] }
+  return ($sorted[$middle - 1] + $sorted[$middle]) / 2
+}
 
-function Invoke-Sql([string]$sql) {
-  $psi = New-Object Diagnostics.ProcessStartInfo
-  $psi.FileName = $MySql
-  $psi.Arguments = "--defaults-extra-file=`"$cnf`" --batch --skip-column-names --default-character-set=utf8mb4 $Database"
+function Assert-ReadOnlySql([string]$Sql) {
+  # 本守卫检查本脚本自己的固定 SQL 构造器，不作为接收外部任意 SQL 的防火墙。
+  # 除只读事务和会话设置外，禁止数据/结构写入、文件输出和 mysql 客户端命令。
+  if ([string]::IsNullOrWhiteSpace($Sql) -or
+      $Sql -match '(?i)\b(INSERT|UPDATE|DELETE|REPLACE|MERGE|CREATE|ALTER|DROP|TRUNCATE|CALL|LOAD|GRANT|REVOKE|OUTFILE|DUMPFILE|COMMIT)\b' -or
+      $Sql -match '(?i)\bSET\s+(GLOBAL|PERSIST)\b' -or
+      $Sql -match '(?m)^\s*(\\|source\b|system\b|!|#|--)' -or $Sql.Contains('/*')) {
+    throw 'Only the fixed read-only profile SQL is allowed.'
+  }
+  foreach ($statement in $Sql.Split(';')) {
+    if ($statement.Trim() -and $statement.Trim() -notmatch
+        '(?is)^(SELECT\b|WITH\s+RECURSIVE\b|EXPLAIN\s+ANALYZE\s+FORMAT=TREE\s+(SELECT|WITH)\b|SET\s+(@|SESSION\b)|START\s+TRANSACTION\s+READ\s+ONLY\s*$|ROLLBACK\s*$)') {
+      throw 'Unexpected statement in read-only profile.'
+    }
+  }
+}
+
+function Invoke-ProfileClient {
+  param([string]$Executable, [string[]]$Arguments, [string]$Sql,
+        [ValidateRange(1, 300)][int]$TimeoutSeconds = 60)
+  Assert-ReadOnlySql $Sql
+  $psi = [Diagnostics.ProcessStartInfo]::new()
+  $psi.FileName = $Executable
+  foreach ($argument in $Arguments) { $psi.ArgumentList.Add($argument) }
   $psi.UseShellExecute = $false
   $psi.RedirectStandardInput = $true
   $psi.RedirectStandardOutput = $true
   $psi.RedirectStandardError = $true
+  $psi.StandardInputEncoding = [Text.UTF8Encoding]::new($false)
   $psi.StandardOutputEncoding = [Text.Encoding]::UTF8
   $psi.StandardErrorEncoding = [Text.Encoding]::UTF8
-  $psi.StandardInputEncoding = $utf8
-  $p = [Diagnostics.Process]::Start($psi)
-  $outTask = $p.StandardOutput.ReadToEndAsync()
-  $errTask = $p.StandardError.ReadToEndAsync()
-  $p.StandardInput.Write($sql)
-  $p.StandardInput.Close()
-  $p.WaitForExit()
-  $out = $outTask.Result
-  $err = $errTask.Result
-  if ($p.ExitCode -ne 0) { throw "mysql exited $($p.ExitCode): $err" }
-  # keep only marker lines and EXPLAIN trees; data rows are dropped here
-  $keep = New-Object Collections.Generic.List[string]
-  foreach ($line in $out -split "`r?`n") {
-    if ($line.StartsWith('##') -or $line.StartsWith('->')) { $keep.Add($line) }
+  # 不继承环境变量口令；连接凭据必须来自指定 login-path。
+  [void]$psi.Environment.Remove('MYSQL_PWD')
+  $process = [Diagnostics.Process]::new()
+  $process.StartInfo = $psi
+  $started = $false
+  try {
+    if (-not $process.Start()) { throw 'MySQL client did not start.' }
+    $started = $true
+    $outputTask = $process.StandardOutput.ReadToEndAsync()
+    $errorTask = $process.StandardError.ReadToEndAsync()
+    # 异步写入也计入进程期限，防止子进程不读 stdin 时无限阻塞。
+    $writeTask = $process.StandardInput.WriteAsync($Sql)
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    if (-not $writeTask.Wait($TimeoutSeconds * 1000)) { throw 'MySQL client timed out.' }
+    $process.StandardInput.Close()
+    $remaining = [math]::Max(0, $TimeoutSeconds * 1000 - $clock.ElapsedMilliseconds)
+    if (-not $process.WaitForExit([int]$remaining)) { throw 'MySQL client timed out.' }
+    $remaining = [math]::Max(1, $TimeoutSeconds * 1000 - $clock.ElapsedMilliseconds)
+    if (-not [Threading.Tasks.Task]::WhenAll([Threading.Tasks.Task[]]@($outputTask, $errorTask)).Wait([int]$remaining)) { throw 'MySQL client output timed out.' }
+    $output = $outputTask.GetAwaiter().GetResult()
+    $errorText = $errorTask.GetAwaiter().GetResult()
+    if ($process.ExitCode -ne 0) {
+      # 客户端错误可包含 SQL 或资料；只保留数值错误号，不打印原始 stderr。
+      $code = [regex]::Match($errorText, '(?i)\bERROR\s+(\d{3,5})\b')
+      $suffix = if ($code.Success) { ', MySQL code ' + $code.Groups[1].Value } else { '' }
+      throw "MySQL client failed (exit $($process.ExitCode)$suffix)."
+    }
+    foreach ($line in $output -split '\r?\n') {
+      if ($line -match '^##(?:P|ROLE|LP|LG|UR|E|T)\|' -or $line.StartsWith('->')) { $line }
+    }
   }
-  $out = $null
-  return $keep
+  finally {
+    # 只终止本函数创建的子进程；关闭连接也会结束只读事务。
+    if ($started -and -not $process.HasExited) { $process.Kill($true); $process.WaitForExit() }
+    $process.Dispose()
+  }
 }
 
-function Q([string]$s) { "'" + $s.Replace('\', '\\').Replace("'", "''") + "'" }
-
-# ---- SQL text exactly as the mappers send it (Connector/J inlines setString values as quoted strings)
-function SqlFindUser($id) { "SELECT * FROM sys_user WHERE id=$(Q $id);" }
-function SqlRoleIds($id, [bool]$enabledOnly) {
-  $s = "SELECT r.id FROM sys_user_role ur JOIN sys_role r ON r.id=ur.role_id WHERE ur.user_id=$(Q $id)"
-  if ($enabledOnly) { $s += ' AND r.status=1' }
-  $s + ' ORDER BY r.id;'
+function ConvertFrom-TimingLines {
+  param([string[]]$Lines, [string[]]$TimedNames, [string[]]$ExplainNames,
+        [ValidateRange(1, 101)][int]$Runs)
+  $timings = [ordered]@{}; $plans = [ordered]@{}; $seen = @{}; $pending = $null
+  foreach ($key in $TimedNames) { $timings[$key] = [Collections.Generic.List[double]]::new() }
+  foreach ($key in $ExplainNames) { $plans[$key] = [ordered]@{ samples = [Collections.Generic.List[double]]::new(); plan = '' } }
+  foreach ($line in $Lines) {
+    if ($line.StartsWith('->')) {
+      if (-not $pending) { throw 'Unexpected EXPLAIN output.' }
+      $match = [regex]::Match($line, 'actual time=([0-9.eE+-]+)\.\.([0-9.eE+-]+)')
+      if (-not $match.Success) { throw 'EXPLAIN output has no usable timing.' }
+      $value = [double]::Parse($match.Groups[2].Value, [Globalization.CultureInfo]::InvariantCulture)
+      if ($pending.iteration -gt 0) { $plans[$pending.name].samples.Add($value) }
+      $plans[$pending.name].plan = $line.Replace('\n', "`n")
+      $pending = $null
+      continue
+    }
+    $fields = $line.Split('|')
+    if ($fields.Count -lt 3 -or $fields[0] -notin @('##E', '##T')) { throw 'Unexpected timing marker.' }
+    $key = $fields[1]; $iteration = 0
+    if (-not [int]::TryParse($fields[2], [ref]$iteration) -or $iteration -lt 0 -or $iteration -gt $Runs) {
+      throw 'Invalid timing iteration.'
+    }
+    $identity = "$($fields[0])|$key|$iteration"
+    if ($seen.ContainsKey($identity) -or $pending) { throw 'Duplicate or incomplete timing marker.' }
+    $seen[$identity] = $true
+    if ($fields[0] -eq '##E') {
+      if ($fields.Count -ne 3 -or -not $plans.Contains($key)) { throw 'Unknown EXPLAIN marker.' }
+      $pending = @{ name = $key; iteration = $iteration }
+    } else {
+      if ($fields.Count -ne 4 -or -not $timings.Contains($key) -or $fields[3] -notmatch '^\d+$') {
+        throw 'Invalid statement timing marker.'
+      }
+      if ($iteration -gt 0) { $timings[$key].Add([double]$fields[3] / 1000) }
+    }
+  }
+  if ($pending) { throw 'Missing EXPLAIN result.' }
+  $result = [ordered]@{ statementSequenceMs = [ordered]@{}; explainAnalyzeMs = [ordered]@{} }
+  foreach ($key in $TimedNames) {
+    if ($timings[$key].Count -ne $Runs -or -not $seen.ContainsKey("##T|$key|0")) { throw "Incomplete samples: $key" }
+    $result.statementSequenceMs[$key] = [ordered]@{ runs = @($timings[$key]); median = Get-Median $timings[$key]; max = ($timings[$key] | Measure-Object -Maximum).Maximum }
+  }
+  foreach ($key in $ExplainNames) {
+    if ($plans[$key].samples.Count -ne $Runs -or -not $seen.ContainsKey("##E|$key|0")) { throw "Incomplete EXPLAIN samples: $key" }
+    $result.explainAnalyzeMs[$key] = [ordered]@{ runs = @($plans[$key].samples); median = Get-Median $plans[$key].samples; max = ($plans[$key].samples | Measure-Object -Maximum).Maximum; plan = $plans[$key].plan }
+  }
+  return $result
 }
-function SqlGrants($roleId) {
-  "SELECT rp.role_id,p.code,rp.data_scope FROM sys_role_permission rp JOIN sys_permission p ON p.id=rp.permission_id WHERE rp.role_id=$(Q $roleId) ORDER BY p.id;"
+
+function Quote-ProfileId([string]$Id) {
+  if ($Id -notmatch '^[1-9][0-9]*$') { throw 'Profile requires a positive numeric surrogate ID.' }
+  return "'$Id'"
+}
+function SqlFindUser($Id) { "SELECT * FROM sys_user WHERE id=$(Quote-ProfileId $Id);" }
+function SqlRoleIds($Id, [bool]$EnabledOnly) {
+  $sql = "SELECT r.id FROM sys_user_role ur JOIN sys_role r ON r.id=ur.role_id WHERE ur.user_id=$(Quote-ProfileId $Id)"
+  if ($EnabledOnly) { $sql += ' AND r.status=1' }
+  $sql + ' ORDER BY r.id;'
+}
+function SqlGrants($Id) { "SELECT rp.role_id,p.code,rp.data_scope FROM sys_role_permission rp JOIN sys_permission p ON p.id=rp.permission_id WHERE rp.role_id=$(Quote-ProfileId $Id) ORDER BY p.id;" }
+function SqlDept($Id) { "SELECT * FROM sys_dept WHERE id=$(Quote-ProfileId $Id);" }
+function SqlView($Id, [ValidateSet('sys:f339:read', 'hr:f046:read')][string]$Code) {
+  "SELECT data_scope FROM v_user_permission WHERE user_id=$(Quote-ProfileId $Id) AND permission_code='$Code';"
 }
 $SqlDeptAll = 'SELECT * FROM sys_dept ORDER BY sort_no,id;'
-function SqlDept($id) { "SELECT * FROM sys_dept WHERE id=$(Q $id);" }
 $SqlUserAll = 'SELECT * FROM sys_user ORDER BY id;'
-function SqlRoleUsers($rid) { "SELECT user_id FROM sys_user_role WHERE role_id=$(Q $rid) ORDER BY user_id;" }
-function SqlView($uid, $code) {
-  "SELECT data_scope FROM v_user_permission WHERE user_id=$(Q $uid) AND permission_code=$(Q $code);"
-}
-function SqlCteCovers($actorDept, $target) {
-  "WITH RECURSIVE t AS (SELECT id FROM sys_dept WHERE id=$(Q $actorDept) UNION ALL SELECT d.id FROM sys_dept d JOIN t ON d.parent_id=t.id) SELECT u.id FROM sys_user u JOIN t ON t.id=u.dept_id WHERE u.id=$(Q $target);"
-}
-
-$Integrity = @"
-SELECT CONCAT('##I|sys_role_permission|',COUNT(*),'|',BIT_XOR(CRC32(CONCAT_WS('|',role_id,permission_id,data_scope)))) FROM sys_role_permission;
-SELECT CONCAT('##I|sys_role|',COUNT(*),'|',BIT_XOR(CRC32(CONCAT_WS('|',id,code,status,permission_version)))) FROM sys_role;
-SELECT CONCAT('##I|sys_user|',COUNT(*),'|',BIT_XOR(CRC32(CONCAT_WS('|',id,status,role_version,IFNULL(updated_at,''))))) FROM sys_user;
-SELECT CONCAT('##I|sys_user_role|',COUNT(*),'|',BIT_XOR(CRC32(CONCAT_WS('|',user_id,role_id)))) FROM sys_user_role;
-"@
 
 $Setup = @"
 SELECT CONCAT('##P|db|',DATABASE());
@@ -152,198 +228,139 @@ WITH RECURSIVE t AS (SELECT id FROM sys_dept WHERE id=@fd UNION ALL SELECT d.id 
 SELECT CONCAT('##LP|',u.id,'|',u.dept_id) FROM sys_user u JOIN t ON t.id=u.dept_id
  JOIN sys_user_role ur ON ur.user_id=u.id AND ur.role_id=@fr ORDER BY u.id LIMIT 20;
 WITH RECURSIVE t AS (SELECT id FROM sys_dept WHERE id=@lad UNION ALL SELECT d.id FROM sys_dept d JOIN t ON d.parent_id=t.id)
-SELECT CONCAT('##LG|',u.id,'|',u.dept_id) FROM sys_user u WHERE (@lscope='ALL' OR u.dept_id IN (SELECT id FROM t)) ORDER BY u.id LIMIT 20;
+SELECT CONCAT('##LG|',u.id,'|',IFNULL(u.dept_id,'')) FROM sys_user u WHERE (@lscope='ALL' OR u.dept_id IN (SELECT id FROM t)) ORDER BY u.id LIMIT 20;
 SELECT CONCAT('##UR|',ur.user_id,'|',GROUP_CONCAT(r.id ORDER BY r.id)) FROM sys_user_role ur JOIN sys_role r ON r.id=ur.role_id AND r.status=1
  WHERE ur.user_id IN (@ad,@la,@sa) GROUP BY ur.user_id;
-SET @gr=NULL,@gv=NULL;
-SELECT r.id, r.permission_version FROM sys_role r WHERE r.code<>'ADMIN'
- ORDER BY (SELECT COUNT(*) FROM sys_role_permission rp WHERE rp.role_id=r.id) DESC, r.id LIMIT 1 INTO @gr,@gv;
-SELECT CONCAT('##GR|',@gr,'|',@gv,'|',(SELECT code FROM sys_role WHERE id=@gr));
-SELECT CONCAT('##G|',p.code,'|',rp.data_scope) FROM sys_role_permission rp JOIN sys_permission p ON p.id=rp.permission_id WHERE rp.role_id=@gr ORDER BY p.id;
-SELECT CONCAT('##C|',code) FROM sys_permission ORDER BY id;
 "@
 
-function Median([double[]]$xs) { $s = $xs | Sort-Object; $s[[int][math]::Floor(($s.Count - 1) / 2)] }
+function SqlRoleUsers($Id) { "SELECT user_id FROM sys_user_role WHERE role_id=$(Quote-ProfileId $Id) ORDER BY user_id;" }
 
-try {
-  $sec = Read-Host -AsSecureString "MySQL password for $User@${HostName}:$Port"
-  $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec)
-  try { $plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) }
-  finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
-  $escaped = $plain.Replace('\', '\\').Replace('"', '\"')
-  [IO.File]::WriteAllText($cnf, "[client]`nuser=$User`npassword=`"$escaped`"`nhost=$HostName`nport=$Port`n", $utf8)
-  $plain = $null; $escaped = $null
-
-  Write-Host 'Phase 1: environment, data volume and parameters...'
-  $lines = Invoke-Sql ($Setup + $Integrity)
-  $P = @{}; $roles = @(); $listPage = @(); $ledgerPage = @(); $userRoles = @{}; $grants = @(); $codes = @(); $before = @{}
-  foreach ($l in $lines) {
-    $f = $l.Split('|')
-    switch ($f[0]) {
-      '##P' { $P[$f[1]] = @($f[2..($f.Count - 1)]) }
-      '##ROLE' { $roles += [ordered]@{ id = $f[1]; code = $f[2]; version = $f[3]; status = $f[4]; grants = [int]$f[5]; users = [int]$f[6] } }
-      '##LP' { $listPage += , @($f[1], $f[2]) }
-      '##LG' { $ledgerPage += , @($f[1], $f[2]) }
-      '##UR' { $userRoles[$f[1]] = $f[2].Split(',') }
-      '##G' { $grants += , @($f[1], $f[2]) }
-      '##C' { $codes += $f[1] }
-      '##GR' { $P['grant_role'] = @($f[1..3]) }
-      '##I' { $before[$f[1]] = "$($f[2])|$($f[3])" }
-    }
-  }
-  if ($P['db'][0] -ne $Database) { throw "connected to $($P['db'][0]), expected $Database" }
-  $admin = $P['admin'][0]; $la, $lad, $lscope, $lt, $lo, $lnd, $lnu = $P['ledger']
-  $sa, $scode = $P['staff']; $fd, $fr, $fn, $fnd = $P['list']; $gr, $gv, $gcode = $P['grant_role']
-  foreach ($v in @($admin, $la, $lad, $lt, $lo, $sa, $fd, $fr, $gr)) { if (-not $v) { throw 'parameter selection failed; see ##P lines' } }
-  # a page holds min(20, visible rows); record the real size instead of padding
-  Write-Host ("  users list: subtree depts {0}, role users {1}, page rows {2}" -f $fnd, $fn, $listPage.Count)
-  Write-Host ("  ledger actor: scope {0}, subtree depts {1}, users {2}, page rows {3}" -f $lscope, $lnd, $lnu, $ledgerPage.Count)
-  Write-Host ("  grant role: {0} with {1} grants; all codes {2}" -f $gcode, $grants.Count, $codes.Count)
-  $adminRole = ($roles | Where-Object { $_.code -eq 'ADMIN' }).id
-
-  function AuthSeq($uid) {
-    $s = @((SqlFindUser $uid), (SqlRoleIds $uid $true))
-    foreach ($r in $userRoles[$uid]) { $s += SqlGrants $r }
-    $s
-  }
-
-  $explain = [ordered]@{
-    'view_admin_sys_f339_read' = SqlView $admin 'sys:f339:read'
-    'view_ledger_actor_hr_f046_read' = SqlView $la 'hr:f046:read'
-    'view_staff_denied_sys_f339_read' = SqlView $sa 'sys:f339:read'
-    'mapper_findById_user' = SqlFindUser $la
-    'mapper_roleIds_enabled_admin' = SqlRoleIds $admin $true
-    'mapper_findGrants_admin_role' = SqlGrants $adminRole
-    'mapper_findGrants_grant_role' = SqlGrants $gr
-    'mapper_dept_findAll' = $SqlDeptAll
-    'cte_covers_dept_in_scope' = SqlCteCovers $lad $lt
-    'cte_covers_dept_out_of_scope' = SqlCteCovers $lad $lo
-    'mapper_user_findAll' = $SqlUserAll
-    'mapper_role_userIds' = SqlRoleUsers $fr
-  }
-  $timed = [ordered]@{
-    'single_view_admin' = @(SqlView $admin 'sys:f339:read')
-    'single_view_ledger_actor' = @(SqlView $la 'hr:f046:read')
-    'single_cte_covers_in_scope' = @(SqlCteCovers $lad $lt)
-    'require_admin' = AuthSeq $admin
-    'require_ledger_actor' = AuthSeq $la
-    'require_staff' = AuthSeq $sa
-    'target_dept_scope' = (AuthSeq $la) + @((SqlFindUser $la), (SqlFindUser $lt), $SqlDeptAll)
-  }
-  $list = (AuthSeq $admin) + @((SqlFindUser $admin), $SqlDeptAll, (SqlRoleUsers $fr), $SqlUserAll)
-  foreach ($row in $listPage) { $list += SqlDept $row[1]; $list += SqlRoleIds $row[0] $false }
-  $timed['users_list_dept_role_page20'] = $list
-  $ledger = (AuthSeq $la) + @((SqlFindUser $la), $SqlUserAll)
-  if ($lscope -eq 'DEPT') { $ledger += $SqlDeptAll }
-  foreach ($row in $ledgerPage) { $ledger += SqlDept $row[1] }
-  $timed['ledger_search_page20'] = $ledger
-
-  $sb = New-Object Text.StringBuilder
-  foreach ($k in $explain.Keys) {
-    for ($i = 0; $i -le $Runs; $i++) { [void]$sb.AppendLine("SELECT '##E|$k|$i';"); [void]$sb.AppendLine('EXPLAIN ANALYZE ' + $explain[$k]) }
-  }
-  foreach ($k in $timed.Keys) {
-    for ($i = 0; $i -le $Runs; $i++) {
-      [void]$sb.AppendLine('SET @t0=NOW(6);')
-      foreach ($s in $timed[$k]) { [void]$sb.AppendLine($s) }
-      [void]$sb.AppendLine("SELECT CONCAT('##T|$k|$i|',TIMESTAMPDIFF(MICROSECOND,@t0,NOW(6)));")
-    }
-  }
-  # PUT /roles/{id}/permissions: RoleService.replacePermissions under READ COMMITTED, then ROLLBACK
-  $sets = [ordered]@{ "grant_save_same_set_$($grants.Count)" = $grants; "grant_save_upper_bound_$($codes.Count)" = @($codes | ForEach-Object { , @($_, 'ALL') }) }
-  [void]$sb.AppendLine('SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED;')
-  foreach ($k in $sets.Keys) {
-    for ($i = 0; $i -le $Runs; $i++) {
-      [void]$sb.AppendLine('SET @t0=NOW(6);')
-      [void]$sb.AppendLine('START TRANSACTION;')
-      foreach ($s in (AuthSeq $admin)) { [void]$sb.AppendLine($s) }
-      [void]$sb.AppendLine("SELECT * FROM sys_role WHERE id=$(Q $gr) FOR UPDATE;")
-      [void]$sb.AppendLine('SELECT code FROM sys_permission ORDER BY id;')
-      [void]$sb.AppendLine("UPDATE sys_role SET permission_version=permission_version+1 WHERE id=$(Q $gr) AND permission_version=$(Q $gv);")
-      [void]$sb.AppendLine("DELETE FROM sys_role_permission WHERE role_id=$(Q $gr);")
-      foreach ($g in $sets[$k]) {
-        [void]$sb.AppendLine("INSERT INTO sys_role_permission(role_id,permission_id,data_scope) SELECT $(Q $gr),id,$(Q $g[1]) FROM sys_permission WHERE code=$(Q $g[0]);")
-      }
-      [void]$sb.AppendLine("SELECT * FROM sys_role WHERE id=$(Q $gr);")
-      [void]$sb.AppendLine((SqlGrants $gr))
-      [void]$sb.AppendLine("SELECT CONCAT('##T|$k|$i|',TIMESTAMPDIFF(MICROSECOND,@t0,NOW(6)));")
-      [void]$sb.AppendLine("SELECT CONCAT('##V|$k|$i|',(SELECT COUNT(*) FROM sys_role_permission WHERE role_id=$(Q $gr)),'|',(SELECT permission_version FROM sys_role WHERE id=$(Q $gr)));")
-      [void]$sb.AppendLine('SET @t1=NOW(6);')
-      [void]$sb.AppendLine('ROLLBACK;')
-      [void]$sb.AppendLine("SELECT CONCAT('##RB|$k|$i|',TIMESTAMPDIFF(MICROSECOND,@t1,NOW(6)));")
-    }
-  }
-  [void]$sb.AppendLine('SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ;')
-
-  Write-Host "Phase 2: measuring (1 warm-up + $Runs runs per item)..."
-  $out = Invoke-Sql $sb.ToString()
-
-  Write-Host 'Phase 3: integrity check after rollback...'
-  $after = @{}
-  foreach ($l in (Invoke-Sql $Integrity)) { $f = $l.Split('|'); $after[$f[1]] = "$($f[2])|$($f[3])" }
-  $same = $true
-  foreach ($k in $before.Keys) { if ($before[$k] -ne $after[$k]) { $same = $false } }
-
-  $E = [ordered]@{}; $T = [ordered]@{}; $V = @(); $RB = [ordered]@{}; $pending = $null
-  foreach ($l in $out) {
-    if ($l.StartsWith('->')) {
-      if ($pending) {
-        # MySQL prints tiny times in e-notation (e.g. 100e-6 ms)
-        $m = [regex]::Match($l, 'actual time=([0-9.eE+-]+?)\.\.([0-9.eE+-]+)')
-        if (-not $E.Contains($pending[0])) { $E[$pending[0]] = [ordered]@{ ms = @(); plan = '' } }
-        if ([int]$pending[1] -gt 0) { $E[$pending[0]].ms += [double]::Parse($m.Groups[2].Value, [Globalization.CultureInfo]::InvariantCulture) }
-        $E[$pending[0]].plan = $l.Replace('\n', "`n")
-        $pending = $null
-      }
-      continue
-    }
-    $f = $l.Split('|')
-    switch ($f[0]) {
-      '##E' { $pending = @($f[1], $f[2]) }
-      '##T' { if (-not $T.Contains($f[1])) { $T[$f[1]] = @() }; if ([int]$f[2] -gt 0) { $T[$f[1]] += [double]$f[3] / 1000 } }
-      '##V' { $V += "$($f[1])#$($f[2]): grants=$($f[3]) version=$($f[4])" }
-      '##RB' { if (-not $RB.Contains($f[1])) { $RB[$f[1]] = @() }; if ([int]$f[2] -gt 0) { $RB[$f[1]] += [double]$f[3] / 1000 } }
-    }
-  }
-
-  $cpu = (Get-CimInstance Win32_Processor | Select-Object -First 1).Name.Trim()
-  $ramGb = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 1)
-  $result = [ordered]@{
-    measuredAt = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss zzz')
-    environment = [ordered]@{ os = [Environment]::OSVersion.VersionString; cpu = $cpu; ramGb = $ramGb; mysql = $P['version'][0]; bufferPoolMb = $P['buffer_pool_mb'][0]; dataMb = $P['data_mb'][0]; client = 'mysql CLI over 127.0.0.1 TCP' }
-    counts = [ordered]@{ dept = $P['n_dept'][0]; user = $P['n_user'][0]; userRole = $P['n_user_role'][0]; role = $P['n_role'][0]; permission = $P['n_perm'][0]; rolePermission = $P['n_grant'][0]; viewRows = $P['n_view'][0] }
-    roles = $roles
-    parameters = [ordered]@{
-      adminEnabledRoles = $userRoles[$admin].Count
-      ledgerActorScope = $lscope; ledgerActorEnabledRoles = $userRoles[$la].Count; ledgerSubtreeDepts = $lnd; ledgerSubtreeUsers = $lnu
-      staffEnabledRoles = $userRoles[$sa].Count; staffFirstCode = $scode
-      listFilterSubtreeDepts = $fnd; listFilterRoleUsersInSubtree = $fn; listFilterRoleCode = ($roles | Where-Object { $_.id -eq $fr }).code; listPageRows = $listPage.Count; ledgerPageRows = $ledgerPage.Count
-      grantRoleCode = $gcode; grantRoleGrants = $grants.Count; allPermissionCodes = $codes.Count
-      statements = [ordered]@{}
-    }
-    explainAnalyzeMs = [ordered]@{}
-    timedMs = [ordered]@{}
-    rollbackMs = [ordered]@{}
-    grantChecksInsideTxn = $V
-    integrity = [ordered]@{ before = $before; after = $after; unchanged = $same }
-  }
-  foreach ($k in $timed.Keys) { $result.parameters.statements[$k] = $timed[$k].Count }
-  foreach ($k in $sets.Keys) { $result.parameters.statements[$k] = (AuthSeq $admin).Count + 7 + $sets[$k].Count }
-  foreach ($k in $E.Keys) { $result.explainAnalyzeMs[$k] = [ordered]@{ runs = $E[$k].ms; median = (Median $E[$k].ms); max = ($E[$k].ms | Measure-Object -Maximum).Maximum; sql = $explain[$k]; plan = $E[$k].plan } }
-  foreach ($k in $T.Keys) { $result.timedMs[$k] = [ordered]@{ runs = $T[$k]; median = (Median $T[$k]); max = ($T[$k] | Measure-Object -Maximum).Maximum } }
-  foreach ($k in $RB.Keys) { $result.rollbackMs[$k] = [ordered]@{ median = (Median $RB[$k]); max = ($RB[$k] | Measure-Object -Maximum).Maximum } }
-  [IO.File]::WriteAllText($OutFile, ($result | ConvertTo-Json -Depth 8), $utf8)
-
-  Write-Host ''
-  Write-Host 'EXPLAIN ANALYZE (top node, ms)      median      max'
-  foreach ($k in $result.explainAnalyzeMs.Keys) { '{0,-36} {1,9:N3} {2,9:N3}' -f $k, $result.explainAnalyzeMs[$k].median, $result.explainAnalyzeMs[$k].max | Write-Host }
-  Write-Host 'Statement sequences (server wall, ms) median      max'
-  foreach ($k in $result.timedMs.Keys) { '{0,-36} {1,9:N3} {2,9:N3}' -f $k, $result.timedMs[$k].median, $result.timedMs[$k].max | Write-Host }
-  Write-Host "Grant txn checks: $($V.Count) runs, e.g. $($V[0])"
-  Write-Host "Integrity unchanged after rollback: $same"
-  Write-Host "Result JSON (ids, counts, timings, plans only): $OutFile"
-  if (-not $same) { Write-Host 'WARNING: fingerprints differ - investigate before trusting the database.' -ForegroundColor Red; exit 2 }
+function New-ReadOnlyEnvelope([string]$Body, [ValidateRange(100, 300000)][int]$TimeoutMs) {
+  $sql = "SET SESSION MAX_EXECUTION_TIME=$TimeoutMs;`nSET SESSION innodb_lock_wait_timeout=5;`nSET SESSION TRANSACTION READ ONLY;`nSTART TRANSACTION READ ONLY;`n" + $Body + "`nROLLBACK;`n"
+  Assert-ReadOnlySql $sql
+  return $sql
 }
-finally {
-  if (Test-Path $tmp) { Remove-Item -Recurse -Force $tmp }
+
+function New-TimingSql {
+  param([System.Collections.IDictionary]$Explain, [System.Collections.IDictionary]$Timed,
+        [ValidateRange(1, 101)][int]$Count)
+  $builder = [Text.StringBuilder]::new()
+  foreach ($key in $Explain.Keys) {
+    if ($key -notmatch '^[a-z0-9_]+$') { throw 'Invalid profile name.' }
+    for ($index = 0; $index -le $Count; $index++) {
+      [void]$builder.AppendLine("SELECT '##E|$key|$index';")
+      [void]$builder.AppendLine('EXPLAIN ANALYZE FORMAT=TREE ' + $Explain[$key])
+    }
+  }
+  foreach ($key in $Timed.Keys) {
+    if ($key -notmatch '^[a-z0-9_]+$') { throw 'Invalid profile name.' }
+    for ($index = 0; $index -le $Count; $index++) {
+      [void]$builder.AppendLine('SET @t0=NOW(6);')
+      foreach ($statement in $Timed[$key]) { [void]$builder.AppendLine($statement) }
+      [void]$builder.AppendLine("SELECT CONCAT('##T|$key|$index|',TIMESTAMPDIFF(MICROSECOND,@t0,NOW(6)));")
+    }
+  }
+  Assert-ReadOnlySql $builder.ToString()
+  return $builder.ToString()
+}
+
+# 点加载只定义函数和固定查询，便于无数据库的独立进程/解析测试；不触发连接或凭据读取。
+if ($MyInvocation.InvocationName -eq '.') { return }
+$ErrorActionPreference = 'Stop'
+try {
+  $database = 'rbac_verify_full'
+  $application = Get-Command -Name $MySql -CommandType Application -ErrorAction Stop | Select-Object -First 1
+  # --no-defaults 必须靠前；MySQL 仍读取明确 login-path，避免继承普通配置中的 init-command。
+  $clientArguments = @('--no-defaults', "--login-path=$LoginPath", '--batch', '--skip-column-names',
+    '--default-character-set=utf8mb4', '--protocol=TCP', "--host=$HostName", "--port=$Port",
+    '--connect-timeout=5', '--local-infile=0', '--skip-auto-rehash', $database)
+  function Invoke-Sql([string]$Body) {
+    Invoke-ProfileClient -Executable $application.Source -Arguments $clientArguments `
+      -Sql (New-ReadOnlyEnvelope $Body $QueryTimeoutMs) -TimeoutSeconds $ProcessTimeoutSeconds
+  }
+  $properties = @{}; $roleSummary = @(); $listPage = @(); $ledgerPage = @(); $userRoles = @{}
+  foreach ($line in (Invoke-Sql $Setup)) {
+    $fields = $line.Split('|')
+    switch ($fields[0]) {
+      '##P' { if ($properties.ContainsKey($fields[1])) { throw 'Duplicate setup property.' }; $properties[$fields[1]] = @($fields[2..($fields.Count - 1)]) }
+      '##ROLE' {
+        if ($fields.Count -ne 7 -or $fields[2] -notmatch '^[A-Z][A-Z0-9_]{1,31}$') { throw 'Invalid role metadata.' }
+        $roleSummary += [ordered]@{ id = $fields[1]; code = $fields[2]; version = $fields[3]; status = $fields[4]; grants = [int]$fields[5]; users = [int]$fields[6] }
+      }
+      '##LP' { if ($fields.Count -ne 3) { throw 'Invalid user-page metadata.' }; $listPage += ,@($fields[1], $fields[2]) }
+      '##LG' { if ($fields.Count -ne 3) { throw 'Invalid ledger-page metadata.' }; $ledgerPage += ,@($fields[1], $fields[2]) }
+      '##UR' { $userRoles[$fields[1]] = $fields[2].Split(',') }
+      default { throw 'Unexpected setup marker.' }
+    }
+  }
+  foreach ($key in @('db', 'version', 'admin', 'staff', 'ledger', 'list', 'n_dept', 'n_user', 'n_role', 'n_perm', 'n_grant')) {
+    if (-not $properties.ContainsKey($key)) { throw "Missing setup property: $key" }
+  }
+  if ($properties['db'][0] -ne $database) { throw 'Unexpected database; no profiling performed.' }
+  foreach ($key in @('n_dept', 'n_user', 'n_role', 'n_perm', 'n_grant')) {
+    if ($properties[$key][0] -notmatch '^[1-9][0-9]*$') { throw 'The verification database must contain a non-empty imported catalog.' }
+  }
+  $admin = $properties['admin'][0]; $staff = $properties['staff'][0]
+  $ledgerActor, $actorDepartment, $ledgerScope = $properties['ledger'][0..2]
+  $filterDepartment, $filterRole = $properties['list'][0..1]
+  foreach ($id in @($admin, $staff, $ledgerActor, $actorDepartment, $filterDepartment, $filterRole)) { [void](Quote-ProfileId $id) }
+  if ($ledgerScope -notin @('ALL', 'DEPT', 'SELF') -or -not $listPage.Count -or -not $ledgerPage.Count) { throw 'No usable page/scope fixtures.' }
+  foreach ($id in @($admin, $staff, $ledgerActor)) {
+    if (-not $userRoles.ContainsKey($id) -or -not $userRoles[$id].Count) { throw 'Missing enabled-role fixture.' }
+    foreach ($role in $userRoles[$id]) { [void](Quote-ProfileId $role) }
+  }
+  function AuthSeq($Id) {
+    $sequence = @((SqlFindUser $Id), (SqlRoleIds $Id $true))
+    foreach ($role in $userRoles[$Id]) { $sequence += SqlGrants $role }
+    $sequence
+  }
+  $adminRole = @($roleSummary | Where-Object { $_.code -eq 'ADMIN' })
+  if ($adminRole.Count -ne 1) { throw 'Expected exactly one ADMIN role fixture.' }
+  $explain = [ordered]@{
+    view_admin = SqlView $admin 'sys:f339:read'
+    view_ledger_actor = SqlView $ledgerActor 'hr:f046:read'
+    mapper_find_user = SqlFindUser $ledgerActor
+    mapper_admin_grants = SqlGrants $adminRole[0].id
+    mapper_departments = $SqlDeptAll
+    mapper_users = $SqlUserAll
+  }
+  $timed = [ordered]@{ require_admin_sql = AuthSeq $admin; require_staff_sql = AuthSeq $staff; require_ledger_actor_sql = AuthSeq $ledgerActor }
+  $list = (AuthSeq $admin) + @((SqlFindUser $admin), $SqlDeptAll, (SqlRoleUsers $filterRole), $SqlUserAll)
+  foreach ($row in $listPage) { $list += SqlDept $row[1]; $list += SqlRoleIds $row[0] $false }
+  $timed['users_page20_sql'] = $list
+  $ledger = (AuthSeq $ledgerActor) + @((SqlFindUser $ledgerActor), $SqlUserAll)
+  if ($ledgerScope -eq 'DEPT') { $ledger += $SqlDeptAll }
+  # NULL 部门仍属于可见页面行，但 Mapper 会跳过该部门查询；不以 CONCAT(NULL) 隐式漏掉此行。
+  foreach ($row in $ledgerPage) { if ($row[1]) { $ledger += SqlDept $row[1] } }
+  $timed['ledger_page20_sql'] = $ledger
+  Write-Host "Read-only SQL profile: 1 warm-up + $Runs measured samples. No DML or COMMIT."
+  $body = New-TimingSql -Explain $explain -Timed $timed -Count $Runs
+  $measurements = ConvertFrom-TimingLines -Lines @(Invoke-Sql $body) -TimedNames @($timed.Keys) -ExplainNames @($explain.Keys) -Runs $Runs
+  $result = [ordered]@{
+    utilityVersion = '2-readonly'
+    measuredAt = [DateTimeOffset]::Now.ToString('o')
+    scriptSha256 = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    scope = 'SQL/CLI only; warm cache; no JVM, HTTP, DML, COMMIT or end-to-end acceptance'
+    readOnly = $true; measuredRuns = $Runs
+    environment = [ordered]@{ os = [Runtime.InteropServices.RuntimeInformation]::OSDescription; logicalProcessors = [Environment]::ProcessorCount; mysql = $properties['version'][0]; host = $HostName; port = $Port; database = $database }
+    counts = [ordered]@{ department = $properties['n_dept'][0]; user = $properties['n_user'][0]; role = $properties['n_role'][0]; permission = $properties['n_perm'][0]; grants = $properties['n_grant'][0] }
+    parameters = [ordered]@{ ledgerScope = $ledgerScope; ledgerPageRows = $ledgerPage.Count; usersPageRows = $listPage.Count; statements = [ordered]@{} }
+    statementSequenceMs = $measurements.statementSequenceMs
+    explainAnalyzeMs = $measurements.explainAnalyzeMs
+  }
+  foreach ($key in $timed.Keys) { $result.parameters.statements[$key] = $timed[$key].Count }
+  if (-not $OutFile) { $OutFile = Join-Path ([IO.Path]::GetTempPath()) ('rbac-read-perf-' + [guid]::NewGuid().ToString('N') + '.json') }
+  $path = [IO.Path]::GetFullPath($OutFile)
+  if ([IO.Path]::GetExtension($path) -ne '.json') { throw 'Output must be a new .json file.' }
+  # CreateNew 防止覆盖已有证据或其他文件；不把输出写入凭据文件。
+  $stream = [IO.File]::Open($path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+  try {
+    $bytes = [Text.UTF8Encoding]::new($false).GetBytes(($result | ConvertTo-Json -Depth 8) + "`n")
+    $stream.Write($bytes, 0, $bytes.Length)
+  } finally { $stream.Dispose() }
+  Write-Host "Read-only measurements saved: $path"
+  Write-Host 'No performance acceptance verdict is generated; review samples and deployment context.'
+} catch {
+  Write-Error -Message $_.Exception.Message -ErrorAction Continue
+  exit 1
 }

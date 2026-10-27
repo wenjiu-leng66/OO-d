@@ -1,281 +1,231 @@
-# 关键序列图
+# 关键序列
 
-一期 RBAC0 的六条关键流程。选图标准：有并发、有失败分支、有安全含义。
+以下为真实 Java 后端的 API 调用链，路径均写出 `/api/v1`。调用方可以是Swagger或HTTP客户端；当前Vue原型仍调用内存mock，不能把图中的网络链路误认为已完成前后端联调。失败会短路返回，不继续执行后续写入。
 
----
-
-## 1. 登录与首次改密（LOGIN-01/02/04/05）
+## 1. 登录与首次改密
 
 ```mermaid
 sequenceDiagram
-  autonumber
-  actor U as 用户
-  participant B as 登录界面
+  actor U as API调用方
   participant C as AuthController
   participant S as AuthService
   participant A as AuthorizationService
   participant M as UserMapper
-  participant DB as 数据库
-
-  U->>B: 输入工号或手机号 + 密码
-  B->>C: POST /auth/login
-  C->>S: login(identifier, password)
-  S->>M: 按工号或手机号查找
-  M->>DB: SELECT 用户
-  DB-->>M: 用户记录
+  participant P as PasswordEncoder
+  participant H as HttpSession
+  participant MC as MeController
+  U->>C: POST /api/v1/auth/login<br/>{account,password}
+  C->>C: DTO格式校验
+  C->>S: login(body,session)
+  S->>H: 清除旧身份及凭据标记
+  S->>M: findByAccount(account)
   M-->>S: 用户或空
-
-  alt 用户不存在 / 密码错 / 停用
-    Note over S: 四种失败返回同一个 401<br/>不泄漏账号是否存在
-    S-->>C: 认证失败
-    C-->>B: 401 用户名或密码错误
+  S->>P: matches(password,用户摘要或dummyHash)
+  alt 不存在、停用或口令不匹配
+    S-->>U: 401 INVALID_CREDENTIALS
   else 认证通过
-    S->>S: 校验密码哈希
-    S->>S: 轮换会话 ID（防会话固定）
-    S->>S: 记录用户与凭证版本
-    S-->>C: 安全视图（不含密码字段）
-    C-->>B: 200 + 会话 Cookie
+    S->>H: 写入userId及密码摘要标记
+    S->>M: 更新最后登录时间
+    S-->>C: 本人安全视图、权限与改密标记
+    C->>C: request.changeSessionId()
+    C-->>U: 200及JSESSIONID
   end
-
-  Note over B,A: 首次登录或刚被重置密码
-
-  B->>C: PATCH /me/password
-  C->>S: changePassword(旧密码, 新密码)
-  S->>A: 取当前用户
-  A->>M: 按会话中的用户 ID 查询
-  M-->>A: 用户
-  A-->>S: 用户
-
-  alt 旧密码错误 / 长度不在 8–128 / 与旧密码相同
-    S-->>C: 400
+  U->>MC: PATCH /api/v1/me/password<br/>{oldPassword,newPassword}
+  MC->>MC: DTO校验新密码8至128字符
+  MC->>S: password(session,body)
+  S->>A: current(session)
+  A->>M: 读取账号并核对会话凭据
+  A-->>S: 当前用户，或401
+  S->>P: 验证旧密码
+  alt 旧密码错误或新旧相同
+    S-->>U: 400且不更新
   else 校验通过
-    S->>M: 更新密码哈希、清除待改密标记
-    S->>S: 凭证版本 +1
-    S-->>C: 200
+    S->>P: encode(newPassword)
+    S->>M: 更新摘要，清除mustChangePassword
+    S->>H: 更新当前会话的摘要标记
+    MC-->>U: 200 success
   end
+  Note over A,H: 凭据标记是服务端密码摘要，不是整数版本号；其他旧会话在下一请求核对时失效
 ```
 
----
+首次改密前，本人信息/改密/退出仍允许；其他业务入口经 `ready/require` 返回403。登录失败锁定属于后续阶段，本图不声称实现锁定计数。参见 [AuthController](../../backend-procedural/src/main/java/com/municipal/rbac/procedural/controller/AuthController.java)、[MeController](../../backend-procedural/src/main/java/com/municipal/rbac/procedural/controller/MeController.java)、[AuthService](../../backend-procedural/src/main/java/com/municipal/rbac/procedural/service/AuthService.java)。
 
-## 2. 分配用户角色（GRANT-01/03、USER-07）
+## 2. 整组替换用户角色
 
 ```mermaid
 sequenceDiagram
-  autonumber
-  actor B as 管理员
+  actor U as 管理API调用方
   participant C as UserController
   participant S as UserService
   participant A as AuthorizationService
   participant R as RoleMapper
   participant M as UserMapper
-  participant DB as 数据库
-
-  B->>C: PUT /users/4/roles<br/>{roleIds, version}
-  C->>S: replaceRoles(操作者, 目标用户, roleIds, version)
-  S->>A: 检查权限码 + 数据范围 + 目标
-  A-->>S: 通过
-
-  S->>S: 保护检查（目标是自己 / 唯一 admin）
-  alt 受保护账号
-    S-->>C: 409 PROTECTED_ACCOUNT
+  U->>C: PUT /api/v1/users/{id}/roles<br/>{roleIds,version}
+  C->>S: replaceRoles(session,id,body)
+  S->>A: 认证、assign-role权限、范围与目标
+  A-->>S: 目标，或401/403
+  S->>S: 本人/admin保护、重复ID检查
+  S->>M: 读取原已分配角色集合
+  M-->>S: before
+  loop 原有与目标角色并集，按数字ID升序
+    S->>R: lockById(roleId)
+    R-->>S: 当前角色，未知角色则400
   end
-
-  S->>M: 读取目标用户当前角色
-  M-->>S: 原角色集合
-
-  Note over S: 合并「原有 + 新的」角色，按 ID 升序加锁<br/>避免两个事务交叉等待形成死锁
-  loop 按升序逐个加锁
-    S->>R: 锁定角色行
-    R->>DB: SELECT ... FOR UPDATE
-    alt 角色不存在
-      S-->>C: 400 未知角色
-    end
+  S->>S: 检查ADMIN禁授及管理角色增撤边界
+  S->>M: compareAndIncrement(id,version)
+  alt 旧版本
+    S->>M: 读取当前用户角色版本
+    S-->>U: 409 VERSION_CONFLICT，集合不变
+  else CAS成功
+    S->>M: replaceRoles(id,完整roleIds)
+    S->>M: 读取更新后的集合和版本
+    S-->>U: 200 完整集合及新version
   end
-
-  S->>S: 校验管理类角色的分配权限
-  alt 部门管理员尝试分配管理类角色
-    S-->>C: 403
-  end
-
-  S->>M: 比较并递增角色版本
-  M->>DB: UPDATE ... WHERE version = 提交的版本
-  alt 影响行数 = 0（已被抢先）
-    M-->>S: 冲突
-    S-->>C: 409 VERSION_CONFLICT<br/>{currentVersion}
-  else 影响行数 = 1
-    S->>M: 整组替换用户角色关联
-    S-->>C: 200 {roleIds, version + 1}
-  end
+  Note over S,M: READ_COMMITTED事务覆盖版本与集合；写入异常回滚。锁后未重新读取before集合，旧页面依靠CAS拒绝
 ```
 
----
+角色行锁与删除流程协调；版本检测保护读取后的编辑意图；统一加锁顺序降低交叉锁冲突，不保证数据库所有死锁场景均被消除。参见 [UserService.replaceRoles](../../backend-procedural/src/main/java/com/municipal/rbac/procedural/service/UserService.java)。
 
-## 3. 受保护操作与越权拒绝（AUTHZ-01/02/03、PORTAL-05）
+## 3. 台账编辑与范围拒绝
 
 ```mermaid
 sequenceDiagram
-  autonumber
-  actor U as 普通员工
-  participant B as 界面
-  participant C as UserController
+  actor U as API调用方
+  participant C as PortalController
+  participant L as LedgerService
   participant A as AuthorizationService
   participant M as UserMapper
   participant R as RoleMapper
   participant D as DepartmentMapper
-
-  U->>B: 修改用户 3 的邮箱
-  B->>C: PATCH /users/3
-  C->>A: 检查 rbac:user:edit 与目标 3
-
-  Note over A: 第 1 步：认证
-  A->>M: 按会话中的用户 ID 查询
-  M-->>A: 当前用户
-  alt 未登录 / 已停用 / 凭证版本不符
-    A-->>C: 401
+  U->>C: PATCH /api/v1/ledger/employees/{id}<br/>{phone或email}
+  C->>L: update(session,id,body)
+  L->>A: target(session,hr:f046:edit,id)
+  A->>M: 读取当前账号并核对凭据
+  break 未登录、停用、凭据失效或未完成首次改密
+    A-->>U: 401或403，停止后续检查
   end
-
-  Note over A: 第 2 步：权限码
-  A->>R: 已分配且已启用的角色
-  R-->>A: 角色列表
-  A->>R: 角色的权限与范围
-  R-->>A: (权限码, 范围) 列表
-  A->>A: 同一权限码取最宽范围
-  alt 没有 rbac:user:edit
-    A-->>C: 403 FORBIDDEN
+  A->>M: 取得启用的已分配角色ID
+  A->>R: 各角色直接授权
+  A->>A: 同码范围合并、管理码派生、动作权限检查
+  break 缺少hr:f046:edit
+    A-->>U: 403 FORBIDDEN
   end
-
-  Note over A: 第 3 步：数据范围
-  A->>M: 查询目标用户
-  M-->>A: 目标用户或空
-  alt 范围 = SELF
-    A->>A: 目标是本人？
-  else 范围 = DEPT
-    A->>D: 本人部门子树
-    D-->>A: 部门集合
-    A->>A: 目标部门在子树内？
-  else 范围 = ALL
-    A->>A: 通过
+  A->>M: 读取目标用户
+  opt 范围为DEPT
+    A->>D: subtree(本人部门)
   end
-
-  alt 不在范围 或 目标不存在
-    Note over A: 两种情况都返回 403 OUT_OF_SCOPE<br/>details 为空
-    A-->>C: 403 OUT_OF_SCOPE
-    C-->>B: 403（不返回任何对象字段）
-  else 在范围内
-    A-->>C: 目标用户
-    C->>C: 执行业务（修改邮箱）
-    C-->>B: 200
+  alt 目标不存在或不在范围
+    A-->>U: 403 OUT_OF_SCOPE，不返回目标字段
+  else 目标可修改
+    A-->>L: 目标用户
+    L->>L: 非空体、字段白名单、类型及格式校验
+    L->>M: 非空电话唯一性检查
+    L->>M: updateContact(id,phone,email)
+    L-->>U: 200 更新后的台账安全字段
   end
 ```
 
----
+图按职责展开成功路径；401/403在对应检查处立即返回，未通过认证/权限时不会继续查询目标。电话/邮箱以外字段返回400；缺字段保留旧值，显式null或空文本清空。若检查用户管理资料修改，实际入口另为 `PUT /api/v1/users/{id}`，权限为 `rbac:user:update`。参见 [LedgerService](../../backend-procedural/src/main/java/com/municipal/rbac/procedural/service/LedgerService.java)。
 
-## 4. 配置角色权限与版本冲突（GRANT-02）
+## 4. 角色授权与旧版本冲突
 
 ```mermaid
 sequenceDiagram
-  autonumber
-  actor A1 as 管理员 A（version=1）
-  actor A2 as 管理员 B（version=1）
+  actor U as 管理API调用方
   participant C as RoleController
   participant S as RoleService
-  participant R as RoleMapper
-  participant DB as 数据库
-
-  A1->>C: PUT /roles/9/permissions {grants, version=1}
-  A2->>C: PUT /roles/9/permissions {grants', version=1}
-
-  C->>S: replacePermissions(角色 9, grants, version)
-  S->>S: 权限码合法性检查（未知码 / 重复码）
-  S->>S: READ_REQUIRED 检查（非查看操作必须同时有查看）
-  S->>R: 锁定角色行
-  R->>DB: SELECT ... FOR UPDATE
-  Note over DB: 第二个请求在此阻塞<br/>直到第一个事务提交
-
-  S->>R: 比较并递增授权版本
-  R->>DB: UPDATE ... WHERE permission_version = 1
-  alt 影响行数 = 1（先到）
-    R-->>S: 成功
-    S->>R: 整组替换角色授权
-    S-->>C: {version: 2, grants}
-    C-->>A1: 200
-  else 影响行数 = 0（被抢先）
-    R-->>S: 冲突
-    S->>R: 读取当前版本
-    R-->>S: 2
-    S-->>C: 409 VERSION_CONFLICT {currentVersion: 2}
-    C-->>A2: 409
-  end
-
-  Note over DB: 事务提交后第二个请求才拿到行锁<br/>此时版本已是 2，条件更新失败
-```
-
----
-
-## 5. 权限变更即时生效（GRANT-05）
-
-```mermaid
-sequenceDiagram
-  autonumber
-  actor Admin as 管理员
-  actor Staff as 员工（持旧会话）
-  participant C as 业务 Controller
   participant A as AuthorizationService
   participant R as RoleMapper
-  participant M as UserMapper
-
-  Admin->>C: 撤销员工的角色
-  C->>M: 删除用户角色关联
-  Note over M: 不需要通知任何会话
-
-  Staff->>C: 访问受保护接口（同一个旧 Cookie）
-  C->>A: 检查权限码
-  Note over A: 每次请求重新查数据库<br/>不缓存、不信任 Cookie 里的权限
-  A->>M: 账号仍启用？
-  A->>R: 已分配且已启用的角色
-  R-->>A: 空集
-  A->>A: 权限并集为空
-  A-->>C: 403
-  C-->>Staff: 403（下一次请求即生效）
+  participant K as CatalogMapper
+  Note over U,R: 两管理员都读取version=1；每次提交均走以下流程
+  U->>C: PUT /api/v1/roles/{id}/permissions<br/>{grants,version:1}
+  C->>S: replacePermissions(session,id,body)
+  S->>A: require(rbac:role:grant)
+  S->>R: lockById(id)
+  Note over S,R: 其他事务持锁时等待；拿锁后再读取并校验当前角色
+  S->>S: ADMIN保护
+  S->>K: 合法清单权限白名单
+  S->>S: 未知/重复码、同功能read依赖检查
+  S->>R: compareAndIncrement(id,1)
+  alt 当前version仍为1
+    R-->>S: 成功并更新到2
+    S->>R: replaceGrants(id,完整grants)
+    S-->>U: 200 新集合及version=2
+  else 另一事务已提交version=2
+    R-->>S: CAS失败
+    S->>R: currentVersion(id)
+    S-->>U: 409 VERSION_CONFLICT，currentVersion=2
+  end
+  Note over S,R: 版本与授权在同一READ_COMMITTED事务中；实际写入失败必须全部回滚
 ```
 
----
+该图展示同一请求流程的两种结果，不表示两个请求各自都能成功递增。非法参数、保护或权限失败在CAS前拒绝。生产接口没有模拟失败开关，数据库失败回滚由集成测试注入异常验证。参见 [RoleService.replacePermissions](../../backend-procedural/src/main/java/com/municipal/rbac/procedural/service/RoleService.java)。
 
-## 6. 角色删除与确认（ROLE-03）
+## 5. 撤权在下一请求生效
 
 ```mermaid
 sequenceDiagram
-  autonumber
-  actor B as 管理员
-  participant C as RoleController
-  participant S as RoleService
-  participant R as RoleMapper
+  actor Admin as 管理API调用方
+  actor Staff as 员工API调用方
+  participant UC as UserController
+  participant US as UserService
+  participant BC as PortalController
+  participant LS as LedgerService
+  participant A as AuthorizationService
   participant M as UserMapper
-
-  B->>C: DELETE /roles/9?confirm=false
-  C->>S: delete(角色 9, confirm)
-
-  S->>R: 先锁定角色行
-  alt 角色不存在
-    S-->>C: 404
-  end
-  alt 内置角色
-    S-->>C: 409 内置角色不可删除
-  end
-  alt 超级管理员角色
-    S-->>C: 409 超管角色不可删除
-  end
-
-  S->>R: 查询仍引用该角色的用户
-  R-->>S: 用户列表
-
-  alt 有用户 且 confirm = false
-    S-->>C: 409 ROLE_HAS_USERS
-    Note over B: 前端提示「仍有 N 个用户，确认删除？」
-  else 无用户 或 confirm = true
-    S->>R: 删除角色与授权关联
-    S->>R: 删除用户角色关联
-    S->>M: 逐一对受影响用户递增角色版本
-    S-->>C: 204
+  Admin->>UC: PUT /api/v1/users/{id}/roles<br/>完整集合及当前version
+  UC->>US: replaceRoles
+  US->>A: 操作者权限、范围和保护检查
+  US->>M: CAS及关系替换，事务提交
+  UC-->>Admin: 200
+  Staff->>BC: GET /api/v1/ledger/employees<br/>继续携带原JSESSIONID
+  BC->>LS: list(session,筛选及分页)
+  LS->>A: require(hr:f046:read)
+  A->>M: 查当前账号与启用的已分配角色ID
+  M-->>A: 撤权后的角色集合
+  A->>A: 重算有效权限
+  alt 已无该动作权限
+    A-->>Staff: 403
+  else 其他启用角色仍提供该码
+    A-->>LS: 该码剩余角色合并后的范围
+    LS-->>Staff: 按新范围返回结果
   end
 ```
+
+只移除一个角色时，其他角色仍可能提供相同权限，不能把“撤角色”一律画成403。会话只保存身份与凭据标记，不缓存角色授权快照；停用账号/密码变更则属于401的身份失效。参见 [AuthorizationService](../../backend-procedural/src/main/java/com/municipal/rbac/procedural/service/AuthorizationService.java)。
+
+## 6. 角色删除与确认
+
+```mermaid
+sequenceDiagram
+  actor U as 管理API调用方
+  participant C as RoleController
+  participant S as RoleService
+  participant A as AuthorizationService
+  participant R as RoleMapper
+  participant DB as 数据库
+  U->>C: DELETE /api/v1/roles/{id}?confirm=false或true
+  C->>S: delete(session,id,confirm)
+  S->>A: require(rbac:role:delete)
+  S->>R: lockById(id)
+  R->>DB: SELECT角色 FOR UPDATE
+  alt 角色不存在
+    S-->>U: 404
+  else 内置角色或ADMIN
+    S-->>U: 409 PROTECTED_ROLE
+  else 可删除角色
+    S->>R: lockedUserIds(id)
+    R->>DB: 锁定并读取关联用户ID
+    alt 有用户且未确认
+      S-->>U: 409 ROLE_HAS_USERS
+    else 无用户或明确确认
+      S->>R: delete(id,关联用户ID集合)
+      R->>DB: 先递增各受影响用户role_version
+      R->>DB: 删除角色权限、用户角色及角色
+      S-->>U: 204 No Content
+    end
+  end
+  Note over S,DB: READ_COMMITTED事务；与授角共用角色锁，失败回滚版本和关联
+```
+
+版本更新和删除SQL均由 `RoleMapper.delete` 执行，不经 `UserMapper`。401/403可能在角色锁前发生，不能把所有失败都称为409。参见 [RoleService.delete](../../backend-procedural/src/main/java/com/municipal/rbac/procedural/service/RoleService.java)、[RoleMapper](../../backend-procedural/src/main/java/com/municipal/rbac/procedural/mapper/RoleMapper.java)。

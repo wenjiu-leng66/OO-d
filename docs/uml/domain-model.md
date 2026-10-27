@@ -1,58 +1,59 @@
-# 领域模型（分析类图）
+# 业务概念与关系
 
-一期 RBAC0 的业务概念与关系。对应需求 USER、ROLE、DEPT、CAT、GRANT、AUTHZ。
+本图表达一期 RBAC0 的业务概念与持久化关系，不是 JPA 映射或 `backend-oo/` 的实现类图。数据范围属于“角色—权限授予关系”，不属于用户或整个角色。
 
 ```mermaid
 classDiagram
   direction LR
-
   class Department {
-    +String name
-    +DeptType type
-    +int level
+    name
+    deptType
+    parentId
+    managerUserId
   }
-
   class User {
-    +String username
-    +String realName
-    +UserStatus status
+    username
+    realName
+    status
+    mustChangePassword
+    roleVersion
   }
-
   class Role {
-    +String code
-    +String name
-    +boolean builtin
-    +RoleStatus status
+    code
+    name
+    enabled
+    builtin
+    permissionVersion
   }
-
+  class UserRoleAssignment {
+    userId
+    roleId
+  }
+  class RolePermissionGrant {
+    roleId
+    permissionId
+    dataScope
+  }
   class Permission {
-    +String code
+    code
+    functionId
+    actionId
   }
-
-  class System {
-    +String code
-    +String name
+  class ApplicationSystem {
+    code
+    name
   }
-
   class Module {
-    +String name
+    name
   }
-
   class FunctionPoint {
-    +String code
-    +String name
+    code
+    name
   }
-
   class Action {
-    <<enumeration>>
-    read
-    create
-    edit
-    approve
-    export
-    delete
+    code
+    name
   }
-
   class DataScope {
     <<enumeration>>
     ALL
@@ -60,62 +61,24 @@ classDiagram
     SELF
   }
 
-  class DeptType {
-    <<enumeration>>
-    HQ
-    HQ_DEPT
-    BRANCH
-    BRANCH_DEPT
-    PROJECT
-  }
-
-  class UserStatus {
-    <<enumeration>>
-    PENDING_PASSWORD_CHANGE
-    ENABLED
-    DISABLED
-  }
-
-  class RoleStatus {
-    <<enumeration>>
-    ENABLED
-    DISABLED
-  }
-
-  class UserRoleAssignment {
-    +userId
-    +roleId
-  }
-
-  class RolePermissionGrant {
-    +roleId
-    +permissionId
-    +scope
-  }
-
-  Department "1" --> "*" Department : 上级 / 下级
-  Department "1" --> "*" User : 所属
-  Department "0..1" --> "1" User : 负责人
-
-  User "1" -- "*" UserRoleAssignment
-  Role "1" -- "*" UserRoleAssignment
-
-  Role "1" -- "*" RolePermissionGrant
-  Permission "1" -- "*" RolePermissionGrant
-
-  System "1" --> "*" Module : 包含
-  Module "1" --> "*" FunctionPoint : 包含
-  FunctionPoint "1" --> "*" Permission : 派生
-  Action "1" --> "*" Permission : 动作
-
-  RolePermissionGrant --> DataScope : 授予范围
-  Department --> DeptType : 类型
-  User --> UserStatus : 状态
-  Role --> RoleStatus : 状态
-
-  note for RolePermissionGrant "数据范围是「授予关系」的属性：同一个权限码，在不同角色下可以有不同的范围"
-  note for Permission "权限码 = 系统短码:功能点编号:动作，例如 hr:f046:edit。由功能点 × 动作派生，不人工维护"
-  note for Department "DEPT 范围 = 本部门 + 全部下级部门（沿 parent 求子树）"
+  Department "0..1" --> "0..*" Department : 上级到下级
+  Department "0..1" -- "0..*" User : 所属部门
+  Department "0..*" --> "0..1" User : 负责人
+  User "1" -- "0..*" UserRoleAssignment : 分配
+  Role "1" -- "0..*" UserRoleAssignment : 被分配
+  Role "1" -- "0..*" RolePermissionGrant : 直接授予
+  Permission "1" -- "0..*" RolePermissionGrant : 被授予
+  ApplicationSystem "1" -- "0..*" Module : 包含
+  Module "1" -- "0..*" FunctionPoint : 包含
+  FunctionPoint "1" -- "0..*" Permission : 动作组合
+  Action "1" -- "0..*" Permission : 动作组合
+  RolePermissionGrant --> DataScope : 逐授权保存范围
 ```
 
-> 读图：用户与角色、角色与权限都是多对多，中间各有一张授予关系；**数据范围挂在角色—权限的授予关系上**，不在用户或角色上。权限不是人工清单，由功能点 × 动作派生。
+- 部门根的 `parent_id` 可空，用户 `dept_id` 也可空。一个部门最多一个负责人；数据库没有限制同一用户只能负责一个部门。姓名只展示和核对，关系使用稳定 ID。
+- `sys_user.status` 只有启用/停用；`must_change_password` 是独立标记。“已停用且仍待改密”合法，不能把待改密画成第三种互斥账号状态。
+- `role_version` 管用户的完整角色集合，`permission_version` 管角色的完整授权集合；都不是会话凭据版本。
+- 功能点与六动作在导入/初始化时生成 `sys_permission` 实际记录，权限码稳定为 `系统码:fNNN:动作`；不由客户端任意创建。
+- 同码授权取 `ALL > DEPT > SELF`，不同动作各自保留范围；`rbac:*` 管理码由已授予清单码在服务层派生，不另直接写入目录表。
+
+物理字段、唯一键和删除行为以[数据库设计](../database/database-design.md)、[数据字典](../database/data-dictionary.md)和[V001迁移](../../database/migrations/V001__create_core_tables.sql)为准。继承边、约束和审计表不属于当前模型。

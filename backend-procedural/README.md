@@ -25,7 +25,7 @@ mvn package -DskipTests
 java -jar target/rbac-procedural-backend-0.1.0-SNAPSHOT.jar
 ```
 
-`mvn test` 使用独立的内存 H2 和合成口令，不读取本地业务库；当前测试含53项隔离单元和29项整合，共82项通过；覆盖范围见下文。应用默认使用 `h2` 配置，数据保存在当前目录的 `work/rbac-local.mv.db`，重启保留数据。演示初始化仅在空库执行，重复启动不会覆盖用户或密码。修改 `RBAC_INITIAL_PASSWORD` 不会重设已有用户密码。
+`mvn test` 使用独立的内存 H2 和合成口令，不读取本地业务库；当前测试含61项隔离单元和29项整合，共90项通过；覆盖范围见下文。应用默认使用 `h2` 配置，数据保存在当前目录的 `work/rbac-local.mv.db`，重启保留数据。演示初始化仅在空库执行，重复启动不会覆盖用户或密码。修改 `RBAC_INITIAL_PASSWORD` 不会重设已有用户密码。
 
 打开 `http://localhost:8080/swagger-ui/index.html`，登录接口为 `POST /api/v1/auth/login`。所有演示账号初始密码均为启动时注入的值：
 
@@ -96,6 +96,8 @@ python ../scripts/smoke_http.py --base-url http://localhost:8080
 
 ## 分层单元测试和覆盖率
 
-新增9类隔离测试：`AuthControllerTest`、`HealthControllerTest`、`AuthorizationServiceTest`、`AuthServiceTest`、`UserServiceTest`、`RoleServiceTest`、`DepartmentMapperTest`、`IdsTest`、`DataInitializerTest`。它们分别验证控制器协作、业务保护/范围/冲突分支、组织遍历/ID边界和合成初始化条件；mock不验证实际SQL、行锁或事务。
+当前10类隔离测试：`BrowserSecurityConfigTest`、`AuthControllerTest`、`HealthControllerTest`、`AuthorizationServiceTest`、`AuthServiceTest`、`UserServiceTest`、`RoleServiceTest`、`DepartmentMapperTest`、`IdsTest`、`DataInitializerTest`。它们分别验证控制器协作、业务保护/范围/冲突分支、组织遍历/ID边界和合成初始化条件；mock不验证实际SQL、行锁或事务。
 
-在仓库根目录运行 `mvn -f backend-procedural/pom.xml clean verify`，一并执行53项单元与29项整合测试。打开 `backend-procedural/target/site/jacoco/index.html` 查看实际覆盖率；2026-10-27的行89.98%、分支74.06%及未覆盖部分见[测试报告](../docs/testing/test-report-2026-10-27.md)。助教现场须重新运行，不只展示旧报告。
+在仓库根目录运行 `mvn -f backend-procedural/pom.xml clean verify`，一并执行61项单元与29项整合测试。打开 `backend-procedural/target/site/jacoco/index.html` 查看实际覆盖率；2026-10-27的行90.89%、分支75.31%及未覆盖部分见[测试报告](../docs/testing/test-report-2026-10-27.md)。助教现场须重新运行，不只展示旧报告。
+
+Compose显式传递`RBAC_ALLOWED_ORIGINS`。示例空值表示只允许同源；确需跨域时配置精确可信Origin。同源Swagger不需额外条目。独立后端未设置该变量时的开发回退来源与Compose空值应分别理解。

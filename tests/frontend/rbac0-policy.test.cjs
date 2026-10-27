@@ -6,6 +6,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { spawnSync } = require('node:child_process');
+const { pathToFileURL } = require('node:url');
 const policyPath = path.resolve(__dirname, '../../frontend/src/authorization/rbac0-policy.js');
 const { hasPermission, canVisit, visibleRoutes, effectivePermissionCodes } = require(policyPath);
 
@@ -26,6 +28,32 @@ test('browser classic script exposes the same usable API without CommonJS', () =
     'permissionScope', 'scopeCovers', 'visibleRoutes', 'widerScope'
   ]);
   assert.equal(browser.Rbac0.hasPermission(session, 'rbac:role:read'), true);
+});
+
+test('CommonJS export also publishes the identical global API used by the Vite adapter', () => {
+  // 模拟打包器提供 module 的执行环境；旧版只写 module.exports，导致适配层读不到全局策略。
+  const bundled = vm.createContext({ module: { exports: {} } });
+  vm.runInContext(fs.readFileSync(policyPath, 'utf8'), bundled);
+  assert.equal(bundled.Rbac0, bundled.module.exports);
+  assert.equal(typeof bundled.Rbac0?.canVisit, 'function');
+  assert.equal(bundled.Rbac0.hasPermission(session, 'rbac:role:read'), true);
+  assert.equal(Object.isFrozen(bundled.Rbac0), true);
+});
+
+test('fresh ESM adapter import works without manually injecting globalThis.Rbac0', () => {
+  // 独立进程避免其他测试手动赋值/模块缓存掩盖缺陷；直接加载实际适配层并执行一次授权判断。
+  const adapterUrl = pathToFileURL(path.resolve(__dirname, '../../frontend/src/policy-adapter.js')).href;
+  const script = `
+    import { routeAccess } from ${JSON.stringify(adapterUrl)};
+    const result = routeAccess(
+      { isAuthenticated: true, permissionsLoaded: true, user: { id: 'synthetic' }, permissions: ['rbac:user:read'] },
+      { path: '/users', meta: { permission: 'rbac:user:read' } }
+    );
+    if (!globalThis.Rbac0 || !result.allowed) throw new Error('Policy export regression');
+  `;
+  const result = spawnSync(process.execPath, ['--input-type=module', '--eval', script], { encoding: 'utf8', timeout: 10000 });
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 0, result.stderr);
 });
 
 test('permissions require both authentication and a completed permission load', () => {

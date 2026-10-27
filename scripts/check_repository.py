@@ -22,7 +22,7 @@ REQUIRED = [
     'tests/README.md', 'deploy/README.md', 'deploy/.env.example',
 ]
 FORBIDDEN_SUFFIXES = {'.xlsx', '.xls', '.xlsm', '.pem', '.key', '.p12', '.pfx', '.jks', '.dump', '.bak'}
-TEXT_SUFFIXES = {'.md', '.yml', '.yaml', '.json', '.py', '.csv', '.mmd', '.java', '.xml', '.properties', '.html', '.css', '.js', '.cjs', '.mjs'}
+TEXT_SUFFIXES = {'.md', '.yml', '.yaml', '.json', '.py', '.csv', '.mmd', '.java', '.xml', '.properties', '.html', '.css', '.js', '.cjs', '.mjs', '.ps1'}
 
 def tracked_candidates():
     """同时检查已跟踪和未忽略的新文件，防止尚未 git add 的敏感资料绕过本地检查。"""

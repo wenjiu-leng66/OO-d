@@ -98,7 +98,7 @@ git diff --check
 | 后端覆盖率 | `backend-procedural/target/site/jacoco/index.html`、`jacoco.xml`；现场展示实际行/分支/方法覆盖率 |
 | 前端测试 | `tests/frontend/*.test.cjs`；覆盖原型策略、mock 与路由，不能代替服务端测试 |
 | 导入测试 | `tests/unit/test_import_excel.py`；合成工作簿，不等于正式三份 Excel 全量导入 |
-| 本次测试报告 | [82项后端测试与JaCoCo](docs/testing/test-report-2026-10-27.md) |
+| 本次测试报告 | [90项后端测试与JaCoCo](docs/testing/test-report-2026-10-27.md) |
 | 本次及历史结果 | [验证记录](docs/stage1/verification-record.md)；记录版本、命令、环境和范围 |
 
 启动专用合成环境后，再执行 `python scripts/smoke_http.py --base-url http://127.0.0.1 --env-file deploy/.env --check-web`。脚本会创建及清理临时合成数据，先确认目标；现场已部署业务库不得未经安排执行写入自测。`check_openapi.py --base-url ...` 只比较方法与路径集合，请求/响应字段和授权语义另行验证。
@@ -116,6 +116,10 @@ git diff --check
 | `docs/` | 需求、设计、分工、追溯、验收和内部解释 | 全组 |
 
 详细责任见 [六人分工](docs/planning/team.md)。功能实现按 [阶段计划](docs/planning/milestones.md)分期；助教检查和老师口试是一次课程检查的两个环节，不能与 RBAC0/RBAC1/最终阶段混为一谈。
+
+## 成员贡献整合
+
+[本次整合决定](docs/stage1/contribution-review-2026-10-27.md)记录代码修复、数据/部署历史证据和模型图的采纳及修订。[UML图集](docs/uml/README.md)与[数据库设计](docs/database/database-design.md)和实际代码对照维护。历史记录不等于当前版本重新部署或重跑验收。
 
 ## 数据、限制和协作
 

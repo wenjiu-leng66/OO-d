@@ -34,6 +34,9 @@ jobs:
           python3 scripts/check_openapi.py
       - name: Test synthetic Excel/CSV import
         run: python3 -m unittest discover -s tests/unit -p 'test_*.py' -v
+      - name: Test read-only SQL profiler with isolated fake clients
+        shell: pwsh
+        run: ./tests/scripts/measure_full_db_perf.test.ps1
       - name: Check whitespace in the commit
         run: git show --format= --check HEAD
 

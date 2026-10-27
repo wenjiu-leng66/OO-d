@@ -40,6 +40,8 @@ services:
       RBAC_DEMO_ENABLED: ${RBAC_DEMO_ENABLED:-false}
       # 初始密码从本地环境传入；开启合成种子前还需确认目标数据库为空。
       RBAC_INITIAL_PASSWORD: ${RBAC_INITIAL_PASSWORD:-}
+      # 显式传入空值，避免部署环境继承 application.yml 中仅供开发的 localhost:5173 白名单。
+      # 同源请求不需额外配置；仅在确需跨域时填写可信客户端的精确 Origin。
       RBAC_ALLOWED_ORIGINS: ${RBAC_ALLOWED_ORIGINS:-}
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
       # 同源代理传递原访问协议，HTTPS 部署时 Cookie Secure 应与代理/TLS 配置配套。

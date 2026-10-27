@@ -26,3 +26,7 @@ mvn -f backend-procedural/pom.xml clean verify
 隔离测试不证明真实 SQL 锁、事务回滚或并发原子性；H2 整合测试不证明 MySQL 的全部行为；mock 前端通过不证明服务端通过。对应需求、测试分工及当前实测值见 [需求追溯](../docs/stage1/requirement-coverage.md)、[结构化设计](../docs/design/structured-design.md)和 [验证记录](../docs/stage1/verification-record.md)。
 
 `contract/`、`e2e/` 等空目录是后续预留，不代表其中已有测试。测试和报告只使用合成数据，生成日志及覆盖率文件不提交为源码；正式检查报告记录版本、执行时间、环境、命令和结果摘要。
+
+## 只读SQL测量工具测试
+
+`pwsh -NoProfile -File tests/scripts/measure_full_db_perf.test.ps1`执行8组隔离测试，使用假客户端子进程检查只读约束、数值/样本边界、解析、去敏和超时；不连接MySQL。GitHub自动检查已加入该命令，Gitee可按同一命令复现。

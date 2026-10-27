@@ -167,7 +167,9 @@ python database/seeds/import_excel.py --dept data/raw/市政公司部门信息�
 3. **重复导入**：生成的 SQL 先清空 10 张表，再按固定 ID 写入。同一份源表导入两次，`verify_import.sql` 第 9 条的业务数据指纹完全相同；只有密码哈希因随机盐而不同，所以指纹不含它。代价是系统里做过的修改（授权、改密码等）会被覆盖，因此只用于初始化和测试库，集成库导入前先备份。
 4. **单元测试**：`python tests/unit/test_import_excel.py`，用合成数据覆盖本文的规则，不需要原始 Excel 和数据库。
 
-课程三份表的基准结果（2026-10-15 首测，2026-10-18 用 main 版脚本在独立 MySQL 8.4 库复核并做两轮重复导入，含员工表）：
+课程三份表的历史基准（2026-10-15 首测；成员1报告于2026-10-18用 `2954385` 的导入器/迁移在独立 MySQL 8.4 库复核两轮，含员工表）：
+
+来源为PR #19与#21的有日期报告，本次未重新取得原表或复算。源版本、聚合指纹、缺少的原始结果及性能口径见[全量核对历史记录](../testing/full-data-verification-2026-10-18.md)，不能将其记为2026-10-27重新执行的结果。
 
 | 项目 | 数量 |
 | --- | --- |
@@ -182,7 +184,7 @@ python database/seeds/import_excel.py --dept data/raw/市政公司部门信息�
 | 用户有效权限（视图行数） | 987,222 |
 | 警告 | 3 条：H117、G310 的 view，I340 空白 |
 | 耗时 | 生成约 2 分钟（主要是 1 万个 PBKDF2 哈希，已多线程并行）；导入 MySQL 约 2.5 秒 |
-| 重复导入 | 两轮的第 9 条指纹和逐表 SHA-256（排除密码哈希与时间列）完全相同，证据见 [验证记录](../stage1/verification-record.md) |
+| 重复导入 | 成员报告两轮第9条指纹及逐表SHA-256相同，排除密码哈希与时间列；完整生成协议/原始结果未随PR归档，见[历史记录](../testing/full-data-verification-2026-10-18.md) |
 
 没有员工表时（演示方案）的结果：用户 112（110 位不同的负责人，加 admin 和 staff），负责人关联 111 / 111，其余各项相同。
 
@@ -199,3 +201,5 @@ python database/seeds/import_excel.py --dept data/raw/市政公司部门信息�
 ## 10. 初始密码
 
 导入账号的初始密码在运行时输入，不写进仓库，也不写进生成的 SQL 和报告（Q23）。所有导入账号的 `must_change_password` 为 1，首次登录必须先修改密码。哈希格式与 Spring Security 的 `Pbkdf2PasswordEncoder.defaultsForSpringSecurity_v5_8()` 相同，存成 `{pbkdf2@SpringSecurity_v5_8}` 加十六进制的盐和哈希；后端用 `PasswordEncoderFactories.createDelegatingPasswordEncoder()` 即可校验，最终算法与成员 4 统一。初始密码至少 6 位，演示时不要用电话号码。
+
+当前导入器参数下限为6位，后端新增/重置账号配置要求至少8位，两者不是同一输入校验。联用验收环境采用至少8位的受控初始口令；首次改密按真实API的8–128字符规则验证。

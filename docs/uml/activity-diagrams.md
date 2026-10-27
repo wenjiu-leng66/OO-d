@@ -1,115 +1,53 @@
-# 活动图（决策流程）
+# 关键决策活动
 
-**负责人**：成员 5（胡俊朗）　**依据**：`AuthorizationService`、`RoleService` 实际实现
+## 1. 用户对象操作的授权与范围
 
-> **为什么这几处用活动图而不是序列图**：
-> 序列图擅长表达「谁在什么时候发什么消息」，但表达不了**多重判断分支**。
-> 下面两条流程各有多达 5 个判断节点，用活动图一眼能看出「在哪一步被拒绝」，
-> 序列图会画成一堆 `alt/else` 嵌套，反而看不清。
-
----
-
-## 1. 授权判定决策流
-
-这是全系统**每一次受保护请求**都会走的路径。
+下图抽象服务层对一个用户目标的检查；认证、权限未通过时立即短路。目录/菜单等无用户目标的查询不执行同一套目标判断，本人信息/改密/退出对强制改密状态有显式例外。
 
 ```mermaid
 flowchart TD
-  S([收到受保护请求]) --> A{"会话有效?<br/>账号存在且启用<br/>凭证版本一致"}
-  A -- 否 --> R401["401 未认证"]
-  A -- 是 --> B{"已完成首次改密?<br/>must_change_password = 0"}
-  B -- 否 --> R403a["403 仅允许改密与查看本人"]
-  B -- 是 --> C{"拥有该权限码?<br/>角色已分配且已启用"}
-
-  C -- 否 --> R403b["403 FORBIDDEN"]
-  C -- 是 --> D{"该权限的数据范围"}
-
-  D -- ALL --> OK([执行业务])
-  D -- DEPT --> E{"目标部门在<br/>本部门子树内?"}
-  D -- SELF --> F{"目标是本人?"}
-
-  E -- 否 --> R403c["403 OUT_OF_SCOPE<br/>details 为空"]
+  S([业务服务收到请求]) --> A{会话账号存在、启用且凭据匹配?}
+  A -- 否 --> E401[401 UNAUTHENTICATED]
+  A -- 是 --> B{已完成首次改密?}
+  B -- 否 --> E403a[403 PASSWORD_CHANGE_REQUIRED]
+  B -- 是 --> C{启用的已分配角色提供所需动作权限?}
+  C -- 否 --> E403b[403 FORBIDDEN]
+  C -- 是 --> T{目标用户存在?}
+  T -- 否 --> OUT[403 OUT_OF_SCOPE]
+  T -- 是 --> D{该权限码的范围}
+  D -- ALL --> OK([返回已授权目标给业务服务])
+  D -- DEPT --> E{目标在本人部门及全部下级?}
+  D -- SELF --> F{目标ID等于本人ID?}
+  D -- 其他 --> OUT
+  E -- 否 --> OUT
   E -- 是 --> OK
-  F -- 否 --> R403c
+  F -- 否 --> OUT
   F -- 是 --> OK
 ```
 
-### 关键设计点
+同码范围取最大值，不同动作独立。`OUT_OF_SCOPE`不返回目标字段，无法区分目标缺失与范围外。业务写入还需额外校验字段、目标迁入部门、唯一性、保护规则与版本，不能把本图通过等同于写入已经完成。来源：[AuthorizationService](../../backend-procedural/src/main/java/com/municipal/rbac/procedural/service/AuthorizationService.java)。
 
-| 节点 | 设计决策 | 理由 |
-|---|---|---|
-| **A 会话** | 每次请求从数据库重读账号与凭证版本 | 停用账号、重置密码后旧会话**立即**失效，不等超时 |
-| **B 首次改密** | 未改密时只放行极少数操作 | 防止初始密码长期可用 |
-| **C 权限码** | 只来自**已分配且已启用**的角色 | 停用角色即刻失去权限 |
-| **D 范围** | 同一权限多角色取 `ALL > DEPT > SELF` 最宽 | 不同码独立，不互相污染 |
-| **拒绝出口** | 三种拒绝用**不同状态码 + 统一空 details** | 401/403 可区分；`OUT_OF_SCOPE` 不返回对象字段 |
-
-### 讲解时可以强调的一句话
-
-> **「范围外」和「不存在」返回同一个 403，且 details 为空**——
-> 否则攻击者可以用状态码差异探测哪些用户 ID 存在。
-
----
-
-## 2. 角色删除与保护判定流
-
-删除一个角色要连过**五道保护**，任何一道不过就返回 409。
+## 2. 角色删除
 
 ```mermaid
 flowchart TD
-  S([DELETE /roles/id]) --> A{"拥有 rbac:role:delete?"}
-  A -- 否 --> E403["403"]
-  A -- 是 --> L["锁定角色行<br/>SELECT ... FOR UPDATE"]
-  L --> B{"角色存在?"}
-  B -- 否 --> E404["404 NOT_FOUND"]
-  B -- 是 --> C{"builtin = 1?<br/>内置角色"}
-  C -- 是 --> E409a["409 内置角色不可删除"]
-  C -- 否 --> D{"code = ADMIN?<br/>超级管理员角色"}
-  D -- 是 --> E409b["409 超管角色不可删除"]
-  D -- 否 --> F{"仍有用户引用?"}
-
-  F -- 否 --> DEL["删除角色"]
-  F -- 是 --> G{"confirm = true?"}
-  G -- 否 --> E409c["409 ROLE_HAS_USERS"]
-  G -- 是 --> DEL2["删除角色<br/>+ 级联清理 sys_user_role<br/>+ 递增受影响用户的 role_version"]
-
-  DEL --> OK([204 No Content])
-  DEL2 --> OK
+  S([DELETE角色请求]) --> A{身份、改密及role:delete权限通过?}
+  A -- 否 --> DENY[按原因返回401或403]
+  A -- 是 --> LOCK[事务内锁定角色行]
+  LOCK --> EXISTS{角色存在?}
+  EXISTS -- 否 --> N[404 NOT_FOUND]
+  EXISTS -- 是 --> BUILTIN{builtin或ADMIN?}
+  BUILTIN -- 是 --> P[409 PROTECTED_ROLE]
+  BUILTIN -- 否 --> MEMBERS[锁定并读取引用用户ID]
+  MEMBERS --> HAS{有引用用户?}
+  HAS -- 否 --> WRITE
+  HAS -- 是 --> CONFIRM{confirm=true?}
+  CONFIRM -- 否 --> C[409 ROLE_HAS_USERS]
+  CONFIRM -- 是 --> WRITE[递增受影响用户role_version]
+  WRITE --> DELETE[删除角色权限、用户角色和角色本体]
+  DELETE --> SUCCESS([事务提交后204])
+  WRITE -. SQL异常 .-> FAIL[回滚版本与关联，返回失败]
+  DELETE -. SQL异常 .-> FAIL
 ```
 
-### 关键设计点
-
-| 节点 | 设计决策 | 理由 |
-|---|---|---|
-| **L 加锁** | 先 `SELECT ... FOR UPDATE` 再读数据 | 避免「判断时没人用，删除时正好被分配」的竞态 |
-| **C/D 两级保护** | 内置角色与超管角色分开判断 | 内置 6 个角色不可删；超管角色另有额外限制 |
-| **F/G 确认机制** | 有成员时必须显式 `confirm=true` | 防止误删有业务影响的角色 |
-| **DEL2 版本递增** | 删除后**批量递增**受影响用户的 `role_version` | 这些用户的角色集合变了，其未提交的并发修改应被 409 拒绝 |
-
-### 讲解时可以强调的一句话
-
-> **删除不是简单的 DELETE**：它要先加锁、过五道保护、并在同一事务里
-> 清理关联表、递增受影响用户的版本号——**否则其他管理员手里的旧版本号会继续生效**。
-
----
-
-## 3. 两条流程的共性
-
-| 共性 | 体现 |
-|---|---|
-| **拒绝尽可能早** | 认证不过不查权限，权限不过不查范围 |
-| **状态码有语义** | 401 认证 / 403 授权 / 404 不存在 / 409 冲突 |
-| **不泄漏信息** | 范围外与不存在同码，details 为空 |
-| **保护优先于便利** | 宁可多一道判断，不可误删误改 |
-
----
-
-## 4. 与序列图的配合
-
-| 图 | 回答什么 |
-|---|---|
-| **本文件的 2 张活动图** | **「在哪一步被拒绝」** —— 判断逻辑与分支 |
-| [序列图](sequence-diagrams.md) | **「谁在什么时候发什么消息」** —— 调用时序与参与者 |
-
-讲解时建议：**先放活动图讲清规则，再放序列图讲一次真实调用**。
-两张图配合，5 分钟内可以讲完一个完整设计。
+`RoleService.delete`和用户授角使用同一角色锁；`lockedUserIds`在锁内确定引用集合，`RoleMapper.delete`先更新用户版本再删关系。READ_COMMITTED与CAS/行锁分别承担一致性职责，不能只靠“删除时有外键级联”替代确认及保护。来源：[RoleService](../../backend-procedural/src/main/java/com/municipal/rbac/procedural/service/RoleService.java)、[RoleMapper](../../backend-procedural/src/main/java/com/municipal/rbac/procedural/mapper/RoleMapper.java)。
