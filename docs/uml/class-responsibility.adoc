@@ -3,7 +3,7 @@
 一期关键设计类。边界类接收 HTTP，控制类编排用例，仓储类只做
 SQL；鉴权集中在 `AuthorizationService`。
 
-[mermaid]
+[source,mermaid]
 ----
 classDiagram
   direction TB

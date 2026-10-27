@@ -1,4 +1,7 @@
-= 数据字典
+= 数据字典（数据库设计附录）
+
+本文档是一期 RBAC0 的数据库设计：ER 图、10 张表、字段约束、索引与有效权限视图。
+表结构以 `database/migrations/V001__create_core_tables.sql` 为准，完整字段见下文。
 
 主责：成员 1。状态：RBAC0 第一版，对应迁移
 link:../../database/migrations/V001__create_core_tables.sql[V001__create_core_tables.sql]。已在一次性
@@ -28,9 +31,9 @@ X（员工表的列为姓名、用户名、分公司、部门、岗位、电话�
 link:import-rules.md[导入质量规则]。
 * 字典里不写真实姓名、电话和密码样例。
 
-=== ER 图
+== ER 图
 
-[mermaid]
+[source,mermaid]
 ----
 erDiagram
     sys_dept |o--o{ sys_dept : "parent_id 上级部门"
@@ -111,7 +114,7 @@ erDiagram
 `hr:f046:edit`）；清单里一个格子（如“查看/编辑本人”）拆成多条角色授权。视图
 `v_user_permission` 汇总每个用户最终拥有的权限，不在图中。
 
-=== 概念与表
+== 概念与表
 
 [cols=",,,",options="header",]
 |===
@@ -149,8 +152,7 @@ DEPT > SELF，默认拒绝（Q15） |RBAC0
 |会话 |待定 |登录用户、已激活角色、失效信息（Q32） |待定
 |===
 
-[[1-sys_dept-部门]]
-=== 1. sys_dept 部门
+== 1. sys_dept 部门
 
 [cols=",,,,,,",options="header",]
 |===
@@ -193,8 +195,7 @@ sys_user.id，用户删除时置空 |派生：按负责人关联规则 |负责�
 * 上级关系不能成环。外键防不住环，导入脚本会拒绝有环的源表；以后若提供“修改上级部门”，要先用递归
 CTE 检查新上级是否在本部门的子树里。
 
-[[2-sys_user-用户]]
-=== 2. sys_user 用户
+== 2. sys_user 用户
 
 [cols=",,,,,,",options="header",]
 |===
@@ -257,8 +258,7 @@ F，由“男/女”转换，无法识别时置空
 `manager_user_id` 置空。不能停用、删除自己；唯一的超级管理员账号 admin
 不能被停用、删除或改角色（Q20，由后端校验）。
 
-[[3-sys_role-角色]]
-=== 3. sys_role 角色
+== 3. sys_role 角色
 
 [cols=",,,,,,",options="header",]
 |===
@@ -314,8 +314,7 @@ admin，界面上不能授予他人，其权限不能修改（Q9、Q20）
 
 删除策略：内置角色不能删除（后端校验）；删除其他角色时，其用户-角色和角色-权限记录一并删除。
 
-[[4-app_system-软件系统]]
-=== 4. app_system 软件系统
+== 4. app_system 软件系统
 
 [cols=",,,,,,",options="header",]
 |===
@@ -335,8 +334,7 @@ admin，界面上不能授予他人，其权限不能修改（Q9、Q20）
 
 删除策略：第一阶段资源目录只读，由导入维护（Q22）。删除系统时，其模块、功能点、权限和相关角色授权逐级删除。
 
-[[5-app_module-功能模块]]
-=== 5. app_module 功能模块
+== 5. app_module 功能模块
 
 [cols=",,,,,,",options="header",]
 |===
@@ -355,8 +353,7 @@ app_system.id，系统删除时一并删除；与 name 组成 UK `uk_module` |�
 
 删除策略：删除模块时，其功能点、权限和相关角色授权一并删除。
 
-[[6-app_function-功能点]]
-=== 6. app_function 功能点
+== 6. app_function 功能点
 
 [cols=",,,,,,",options="header",]
 |===
@@ -382,8 +379,7 @@ app_module.id，模块删除时一并删除；与 name 组成 UK `uk_function` |
 
 删除策略：删除功能点时，其 6 条权限和相关角色授权一并删除。
 
-[[7-sys_action-动作]]
-=== 7. sys_action 动作
+== 7. sys_action 动作
 
 [cols=",,,,,,",options="header",]
 |===
@@ -399,8 +395,7 @@ app_module.id，模块删除时一并删除；与 name 组成 UK `uk_function` |
 
 删除策略：被权限引用的动作不能删除。以后增加一种动作只需插入一行，再给每个功能点补一条权限，不用改表结构。
 
-[[8-sys_permission-权限]]
-=== 8. sys_permission 权限
+== 8. sys_permission 权限
 
 [cols=",,,,,,",options="header",]
 |===
@@ -423,8 +418,7 @@ sys_action.id，被引用的动作不能删除 |派生 |动作
 
 删除策略：删除权限时，相关角色授权一并删除。
 
-[[9-sys_user_role-用户-角色]]
-=== 9. sys_user_role 用户-角色
+== 9. sys_user_role 用户-角色
 
 [cols=",,,,,,",options="header",]
 |===
@@ -440,8 +434,7 @@ sys_role.id，角色删除时一并删除；`idx_ur_role` |派生
 |created_at |DATETIME |否 |CURRENT_TIMESTAMP |— |系统 |分配时间
 |===
 
-[[10-sys_role_permission-角色-权限]]
-=== 10. sys_role_permission 角色-权限
+== 10. sys_role_permission 角色-权限
 
 [cols=",,,,,,",options="header",]
 |===
@@ -462,7 +455,71 @@ DEPT，查看、导出为 ALL；系统管理员、公司领导全部为
 ALL；普通员工含“本人”的格子为 SELF，其余为 ALL
 |===
 
-=== 视图 v_user_permission 用户有效权限
+== 索引设计
+
+主键均为聚簇索引；下表列出业务查询使用的唯一键与普通索引。
+
+[cols="3,2,3",options="header"]
+|===
+|索引 |表 |用途
+
+|`uk_dept_name`
+|`sys_dept`
+|部门名称唯一
+
+|`idx_dept_parent`
+|`sys_dept`
+|按上级查下级，求部门子树
+
+|`uk_user_username`、`uk_user_phone`
+|`sys_user`
+|工号、手机号唯一，登录查询
+
+|`idx_user_dept`
+|`sys_user`
+|按部门筛选用户
+
+|`idx_user_real_name`
+|`sys_user`
+|按姓名搜索
+
+|`uk_role_code`
+|`sys_role`
+|角色编码唯一
+
+|`uk_system_code`、`uk_system_name`
+|`app_system`
+|系统编码与名称唯一
+
+|`uk_module (system_id, name)`
+|`app_module`
+|同一系统下模块名唯一
+
+|`uk_function_code`、`uk_function (module_id, name)`
+|`app_function`
+|功能点编码唯一，同模块下名称唯一
+
+|`uk_action_code`
+|`sys_action`
+|动作码唯一
+
+|`uk_perm (function_id, action_id)`、`uk_perm_code (code)`
+|`sys_permission`
+|功能点乘动作唯一，权限码鉴权
+
+|`idx_ur_role`
+|`sys_user_role`
+|按角色查用户，角色成员与删除检查
+
+|`idx_rp_perm`
+|`sys_role_permission`
+|按权限查角色，授权影响面检查
+|===
+
+鉴权主查询为 `WHERE user_id = ? AND permission_code = ?`：前者走 `sys_user_role` 主键前缀，后者走 `uk_perm_code`。
+
+
+== 视图 v_user_permission 用户有效权限
 
 [cols=",,",options="header",]
 |===
@@ -487,77 +544,6 @@ ALL；普通员工含“本人”的格子为 SELF，其余为 ALL
 `permission_code = 'hr:f046:edit'`。授权变更后下一次请求即按新权限检查（Q17）。RBAC1
 加角色层级时只改这个视图（改成递归 CTE），调用方的查询不变。
 
-=== 与 PR #12 表结构的对照
+== 附：内部历史记录
 
-成员 4、5 的
-https://github.com/wenjiu-leng66/RBAC-Permission-System/pull/12[PR
-#12]（撰写本文时尚未合并）在
-`backend-procedural/src/main/resources/schema.sql` 用 H2 建了 7
-张表，与本字典不同。需求访谈已定“全组只用成员 1
-迁移维护的一套表结构”（Q3），下表供改 Mapper 时对照。
-
-[cols=",,",options="header",]
-|===
-|PR #12 |本字典 |差异
-|`departments(id, name, branch, parent_id, manager_id)` |`sys_dept`
-|`branch` 可由上级链或 `dept_type` 推出；`manager_id` 在本字典有外键
-
-|`users(id, name, employee_no, phone, department_id, position, account_type, status, password_hash, role_version)`
-|`sys_user` |`employee_no` 对应 `username`；`phone`
-同样唯一、可登录；`status` 的 active/inactive 对应 1/0；`role_version`
-一致；不做 `account_type`（Q11）；本字典多了 `must_change_password`
-
-|`roles(id, code, name, description, enabled, permission_version)`
-|`sys_role` |`enabled` 对应 `status`；`permission_version`
-一致；本字典多了 `builtin`
-
-|`permissions(code, name, system_*, module_*, resource_*, action, scope_options)`
-|`sys_permission` + `app_function` / `app_module` / `app_system` +
-`sys_action`
-|本字典按范式拆开，名称靠连接查询或视图取得；权限码同为“系统:资源:动作”格式
-
-|`resources(id, name, type, parent_id)` |`app_system` / `app_module` /
-`app_function` |清单是固定三级，分三张表存
-
-|`user_roles(user_id, role_id)` |`sys_user_role`
-|基本一致，本字典多一个分配时间
-
-|`role_permissions(role_id, permission_code, scope)`
-|`sys_role_permission(role_id, permission_id, data_scope)` |按权限 ID
-引用；范围值大小写不同（all/self 与 ALL/SELF）
-
-|主键 VARCHAR，如 `demo-u-001` |INT 自增 |接口层可以把整数 ID
-输出为字符串
-
-|密码 BCrypt |带算法前缀，导入脚本生成 PBKDF2 |后端用 Spring Security 的
-`DelegatingPasswordEncoder` 可以同时校验 `{bcrypt}` 和
-`{pbkdf2@SpringSecurity_v5_8}`
-
-|动作 read / create / edit / approve |read / create / edit / approve /
-export / delete |前四种一致，清单另有导出、删除
-|===
-
-=== 已定与待统一
-
-已按需求访谈落实到表结构的：权限码格式与动作码（Q12）、工号或手机号登录且手机号不为空时唯一（Q8）、版本号与
-409（Q22）、首次登录改密与初始密码不进仓库（Q23）、内置角色与部门管理员（Q9、Q10、Q20）、不做账号类别（Q11）、部门和资源目录第一阶段只读（Q22）、数据范围
-ALL / DEPT / SELF 及其导入规则（Q38）。清单清洗口径（问题清单 Q-07 ~
-Q-12）和层级多父 DAG（Q-05）已改为组内自定、不再问老师（Q40），依据见
-link:import-rules.md[导入质量规则]。需求规格说明书第 5.4
-节也写了数据范围的导入规则。
-
-[cols=",,",options="header",]
-|===
-|事项 |现状 |需要谁
-|管理后台的 `rbac:*` 权限码 |清单第 18 个系统里实现的模块（用户管理
-f339、角色管理 f340、权限配置 f341、组织架构管理 f342、登录日志
-f348、操作日志 f349）的授权要映射成 `rbac:*`
-码，映射表在接口设计阶段写进契约（Q19）；落库方式随契约确定 |成员
-3、4、6
-
-|密码哈希算法 |列宽已能容纳 BCrypt、PBKDF2 等格式，最终算法跟随后端
-|成员 4
-
-|删除用户的方式
-|第一阶段要提供删除用户（Q22），物理删除还是停用后隐藏待定 |成员 4
-|===
+PR #12 旧表结构对照与组内待定事项属于集成过程记录，保留在 Markdown 版本 `docs/database/data-dictionary.md`，本提交版不展开。

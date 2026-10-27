@@ -3,12 +3,12 @@
 2026-10-18集成版。在成员4/5原后端基础上补齐一期需求，与成员1正式数据库、成员6
 API设计及完整界面原型统一。旧设计保留于link:member4-procedural-rbac0-design.md[成员4/5设计来源]，输入提交见link:../stage1/merge-sources.md[合并记账]。
 
-=== 结构与范式
+== 结构与范式
 
 JDK 21、Spring Boot 3.3.5、Spring
 JDBC。Controller接收HTTP和校验DTO，Service按功能组织认证/授权/校验/事务流水线，Mapper只负责参数化SQL，Views显式构建不含密码的响应。使用少量PO/DTO不改变面向功能实现的核心：授权逻辑集中为可复用步骤，按场景顺序组合；领域对象继承等留待第二阶段独立后端。
 
-[mermaid]
+[source,mermaid]
 ----
 flowchart LR
   HTTP[HTTP Cookie请求] --> C[Controller与DTO校验]
@@ -46,7 +46,7 @@ flowchart LR
 |明确开启时装载合成目录和演示账号；真实Excel走离线导入
 |===
 
-=== 会话与密码
+== 会话与密码
 
 服务端`HttpSession`保存用户ID和当前凭证版本关联，Cookie为`JSESSIONID`。成功登录轮换会话ID，Cookie为HttpOnly、SameSite=Lax，HTTPS启用Secure。每次请求从数据库重新读取账号和授权；账号不存在/停用、凭证已变更等旧会话返回401。退出使会话失效。
 
@@ -54,7 +54,7 @@ flowchart LR
 
 新密码与导入统一使用`{pbkdf2@SpringSecurity_v5_8}`前缀的PBKDF2，通过兼容编码器校验已有带前缀哈希。PBKDF2处理完整的8–128字符密码，避免旧BCrypt算法的72字节截断。响应只通过安全字段视图构造，不直接序列化数据库密码字段。
 
-=== 鉴权与范围
+== 鉴权与范围
 
 每个业务操作按认证→权限码→范围→目标检查。权限只来自已分配且启用的角色，集中由`AuthorizationService`计算；没有明确授予一律拒绝。权限在服务端取得，客户端传来的角色/权限不参与鉴权。
 
@@ -67,7 +67,7 @@ OUT_OF_SCOPE，不返回对象字段。员工台账只允许phone/email，编辑
 
 超级管理员仅预置admin；部门管理员对其部门子树有用户管理权，仅能增删业务角色，不可增删管理类角色或修改角色授权。角色成员查询还按调用者用户查看范围裁剪，缺少用户查看权时返回空集合。
 
-=== 事务与版本
+== 事务与版本
 
 用户角色集合使用`sys_user.role_version`；角色直接授权集合使用`sys_role.permission_version`。GET读取版本，PUT提交完整目标集合和version，先做权限/范围/保护/合法性校验，再在事务中比较并递增版本、替换关联。任意一步异常全部回滚；旧版本409
 VERSION_CONFLICT含currentVersion，不覆盖并发成功结果。
@@ -78,7 +78,7 @@ VERSION_CONFLICT含currentVersion，不覆盖并发成功结果。
 
 禁止停用/删除自己、改自己角色，禁止停用/删除唯一admin或改其角色。六个内置角色不可删除，ADMIN不可停用/改授权。有成员的自建角色删除需要confirm=true；删除清理关联并更新受影响用户角色版本。用户删除通过外键清理角色关联并将部门负责人置空。
 
-=== 数据与运行
+== 数据与运行
 
 以link:../../database/migrations/V001__create_core_tables.sql[正式V001迁移]和link:../database/data-dictionary.md[数据字典]为权威。H2仅作为独立测试环境；服务器使用MySQL8.4和持久卷。目录/部门只读，三份原始Excel由离线脚本生成SQL，不提供网页上传。
 
@@ -86,7 +86,7 @@ VERSION_CONFLICT含currentVersion，不覆盖并发成功结果。
 
 部署由Nginx提供完整Vue原型、真实后端检查入口及静态API设计，并代理/api到Java。原型内存模拟数据与真实Cookie/MySQL相互独立；本次一期允许分别验收。Java/MySQL端口不发布公网，环境文件不提交Git。
 
-=== 测试与限制
+== 测试与限制
 
 接口字段与状态码见link:../../api/openapi.yaml[OpenAPI]。后端集成测试覆盖会话、首次改密、保护、范围、原子授权与409；真实HTTP脚本验证Cookie及运行实例；MySQL迁移、全量导入、持久化和性能分别记录，不能用H2通过替代。
 

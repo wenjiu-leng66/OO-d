@@ -4,10 +4,9 @@
 
 '''''
 
-[[1-登录与首次改密login-01020405]]
-=== 1. 登录与首次改密（LOGIN-01/02/04/05）
+== 1. 登录与首次改密（LOGIN-01/02/04/05）
 
-[mermaid]
+[source,mermaid]
 ----
 sequenceDiagram
   autonumber
@@ -59,10 +58,9 @@ sequenceDiagram
 
 '''''
 
-[[2-分配用户角色grant-0103user-07]]
-=== 2. 分配用户角色（GRANT-01/03、USER-07）
+== 2. 分配用户角色（GRANT-01/03、USER-07）
 
-[mermaid]
+[source,mermaid]
 ----
 sequenceDiagram
   autonumber
@@ -114,10 +112,9 @@ sequenceDiagram
 
 '''''
 
-[[3-受保护操作与越权拒绝authz-010203portal-05]]
-=== 3. 受保护操作与越权拒绝（AUTHZ-01/02/03、PORTAL-05）
+== 3. 受保护操作与越权拒绝（AUTHZ-01/02/03、PORTAL-05）
 
-[mermaid]
+[source,mermaid]
 ----
 sequenceDiagram
   autonumber
@@ -176,10 +173,9 @@ sequenceDiagram
 
 '''''
 
-[[4-配置角色权限与版本冲突grant-02]]
-=== 4. 配置角色权限与版本冲突（GRANT-02）
+== 4. 配置角色权限与版本冲突（GRANT-02）
 
-[mermaid]
+[source,mermaid]
 ----
 sequenceDiagram
   autonumber
@@ -220,10 +216,9 @@ sequenceDiagram
 
 '''''
 
-[[5-权限变更即时生效grant-05]]
-=== 5. 权限变更即时生效（GRANT-05）
+== 5. 权限变更即时生效（GRANT-05）
 
-[mermaid]
+[source,mermaid]
 ----
 sequenceDiagram
   autonumber
@@ -251,10 +246,9 @@ sequenceDiagram
 
 '''''
 
-[[6-角色删除与确认role-03]]
-=== 6. 角色删除与确认（ROLE-03）
+== 6. 角色删除与确认（ROLE-03）
 
-[mermaid]
+[source,mermaid]
 ----
 sequenceDiagram
   autonumber

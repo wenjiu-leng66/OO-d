@@ -4,10 +4,9 @@
 
 '''''
 
-[[1-用户账号状态]]
-=== 1. 用户账号状态
+== 1. 用户账号状态
 
-[mermaid]
+[source,mermaid]
 ----
 stateDiagram-v2
   state "待首次改密" as PendingPassword
@@ -30,10 +29,9 @@ ____
 
 '''''
 
-[[2-角色状态]]
-=== 2. 角色状态
+== 2. 角色状态
 
-[mermaid]
+[source,mermaid]
 ----
 stateDiagram-v2
   state "启用" as RoleEnabled

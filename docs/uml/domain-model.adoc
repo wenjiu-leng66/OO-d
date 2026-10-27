@@ -3,7 +3,7 @@
 一期 RBAC0 的业务概念与关系。对应需求
 USER、ROLE、DEPT、CAT、GRANT、AUTHZ。
 
-[mermaid]
+[source,mermaid]
 ----
 classDiagram
   direction LR
