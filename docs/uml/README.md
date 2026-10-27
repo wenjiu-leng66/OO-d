@@ -11,7 +11,7 @@
 | [用例与初始角色](use-cases.md) | 用例范围、预置授权和例外 | 需求范围及允许/拒绝场景 |
 | [决策活动](activity-diagrams.md) | 对象范围检查、角色删除的拒绝分支 | AUTHZ / ROLE-03 |
 
-结构化分析的上下文、一层 DFD、功能结构及模块契约见[结构化设计](../design/structured-design.md)，数据表与约束见[数据库设计](../database/database-design.md)及[数据字典](../database/data-dictionary.md)。DFD说明数据流，模块图说明职责，序列图说明调用顺序，状态图说明合法迁移，不能互相替代。
+结构化分析的上下文、一层 DFD、功能结构及模块契约见[结构化设计](../design/structured-design.md)，数据表与约束见[数据库设计](../database/database-design.adoc)及[数据字典](../database/data-dictionary.md)。DFD说明数据流，模块图说明职责，序列图说明调用顺序，状态图说明合法迁移，不能互相替代。
 
 权威关系：功能范围以[需求规格](../requirements/req-spec.md)为准，接口字段/状态以[OpenAPI](../../api/openapi.yaml)为准，物理结构以[V001](../../database/migrations/V001__create_core_tables.sql)为准，实际执行结果另见[验证记录](../stage1/verification-record.md)。图与这些内容不一致时同步修正。
 

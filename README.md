@@ -24,7 +24,7 @@
 1. 读本页，了解目录、启动和当前边界。
 2. 读 [一期检查入口](docs/stage1/README.md)，分清助教实操和老师口试。
 3. 读 [需求规格](docs/requirements/req-spec.md)及 [41 条需求追溯](docs/stage1/requirement-coverage.md)，明确“要做什么”。
-4. 读 [结构化设计](docs/design/structured-design.md)及 [后端详细设计](docs/design/detailed-design.md)，明确“怎样分解、数据怎样流动”。
+4. 读 [结构化设计](docs/design/structured-design.md)及 [后端详细设计（AsciiDoc）](docs/design/detailed-design.adoc)，明确“怎样分解、数据怎样流动”。
 5. 按 [代码阅读路线](docs/stage1/code-reading-guide.md)追一次登录、一次范围查询和一次授权保存。
 6. 按 [自测步骤](docs/stage1/self-test.md)运行，再用 [边界检查清单](docs/stage1/review-checklist.md)补查；实际结果记在 [验证记录](docs/stage1/verification-record.md)。
 7. 全组按 [口试对照与分工排练](docs/stage1/oral-review.md)讲解自己的代码和测试。
@@ -34,7 +34,8 @@
 | 入口 | 地址 |
 | --- | --- |
 | 界面原型 | [服务器首页](http://124.70.42.35:8080/) |
-| API 展示及真实调用 | [Swagger UI](http://124.70.42.35:8080/swagger-ui/index.html?url=/api-design/openapi.yaml) |
+| API 文档管理 | [Apifox 公开文档](https://7u8ub108r6.apifox.cn/) |
+| 在线调试及真实调用 | [Swagger UI](http://124.70.42.35:8080/swagger-ui/index.html?url=/api-design/openapi.yaml) |
 | 权威 API 文件 | [OpenAPI YAML](http://124.70.42.35:8080/api-design/openapi.yaml) |
 | 健康检查 | [后端与数据库状态](http://124.70.42.35:8080/api/v1/health) |
 
@@ -121,7 +122,7 @@ git diff --check
 
 ## 成员贡献整合
 
-[本次整合决定](docs/stage1/contribution-review-2026-10-27.md)记录代码修复、数据/部署历史证据和模型图的采纳及修订。[UML图集](docs/uml/README.md)与[数据库设计](docs/database/database-design.md)和实际代码对照维护。历史记录不等于当前版本重新部署或重跑验收。
+[本次整合决定](docs/stage1/contribution-review-2026-10-27.md)记录代码修复、数据/部署历史证据和模型图的采纳及修订。[UML图集](docs/uml/README.md)与[数据库设计](docs/database/database-design.adoc)和实际代码对照维护。历史记录不等于当前版本重新部署或重跑验收。
 
 ## 数据、限制和协作
 

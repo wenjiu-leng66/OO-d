@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | 原型打开且运行 | [服务器原型](http://124.70.42.35:8080/)；准备各类合成账号 | 登录、导航、角色/授权、台账、错误/空态；说明当前 mock 边界 |
 | 后端已部署服务器 | 实际源码 SHA、镜像/容器状态、健康检查 | 接口调用到真实 Java/MySQL；不能用本地 IDE 启动冒充服务器部署 |
-| API 已归档且现场可调 | [指定 Swagger 入口](http://124.70.42.35:8080/swagger-ui/index.html?url=/api-design/openapi.yaml)及 `api/openapi.yaml` | 当场登录、带 Cookie 调用允许与拒绝用例；归档口径请助教核对 |
+| API 管理文档与现场调试 | [Apifox API 文档](https://7u8ub108r6.apifox.cn/)、[Swagger 现场调试](http://124.70.42.35:8080/swagger-ui/index.html?url=/api-design/openapi.yaml)及 `api/openapi.yaml` | 当场登录、带 Cookie 调用允许与拒绝用例；现场核对Apifox、契约文件与实际接口版本一致 |
 | 有架构的后端单元测试 | [结构化设计](../design/structured-design.md)、隔离测试与整合测试分层 | `mvn -f backend-procedural/pom.xml clean verify` 现场运行 |
 | 测试报告与覆盖率 | Surefire 与 JaCoCo | 对应同一被测版本；能解释未覆盖部分及不能证明的事项 |
 

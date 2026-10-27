@@ -9,7 +9,7 @@
 | PR#19，成员1全量导入 | 采纳历史证据 | 保留日期、被测版本及3555=3549+6口径；未重取原表/复算，不用旧29项测试覆盖当前报告 |
 | PR#21，SQL性能 | 修订后采纳 | 保留SQL测量数据和工具；删除把ROLLBACK等同COMMIT、SQL时间等同HTTP保存时间的结论；工具安全约束及测量范围明确化 |
 | PR#22，成员5设计图 | 修订后采纳 | 修正真实接口、Service调用层次、独立账号状态/改密标记、初始角色权限和范围；维护Markdown模型图集 |
-| PR#22，10份AsciiDoc副本 | 不作为第二套文档发布 | 多份是Markdown重复或旧快照，长篇另含不存在的客户端/凭据版本/审计承诺；准确的数据库设计内容提炼进规范Markdown |
+| PR#22，10份AsciiDoc副本 | 不作为第二套文档发布 | 当时未恢复重复或过时快照；课程明确要求AsciiDoc后，基于实际迁移和代码生成当前数据库设计与后端详细设计两份权威文档 |
 | `f989fc3`，成员5后端复核 | 按历史记录吸收 | GitHub保留日期和原版本，修正额外授角前提；当前测试报告为现行证据，Gitee保留正式汇总 |
 | 成员4部署/自测分支（含junmoxiao517两提交） | 提炼后采纳 | 服务器自测为有来源的历史证据；不复制口令及重复566行旧教程，操作与口试要点并入当前入口 |
 
@@ -23,6 +23,6 @@
 
 ## 文档入口
 
-新设计见[模型图集](../uml/README.md)、[结构化设计](../design/structured-design.md)、[数据库设计](../database/database-design.md)。历史数据与部署证据见[全量与SQL测量](../testing/full-data-verification-2026-10-18.md)、[服务器记录](../testing/server-verification-2026-10-21.md)。当前实际测试和未完成项见[验证记录](verification-record.md)。
+新设计见[模型图集](../uml/README.md)、[结构化设计](../design/structured-design.md)、[数据库设计](../database/database-design.adoc)。历史数据与部署证据见[全量与SQL测量](../testing/full-data-verification-2026-10-18.md)、[服务器记录](../testing/server-verification-2026-10-21.md)。当前实际测试和未完成项见[验证记录](verification-record.md)。
 
 GitHub保留内部讲解与追溯，Gitee仅同步修订后的必要模型、正式记录、工具及相同运行代码。此次同步不表示已更新服务器上的应用。

@@ -6,7 +6,7 @@
 
 | 场合 | 已明确要求 | 到场前准备 |
 | --- | --- | --- |
-| 助教检查 | 在正常上课教室进行，先于老师预约；原型能打开运行，后端已部署服务器，API 放入 API 仓库并现场调用；本人后端分层单元测试现场运行，展示覆盖率报告 | 固定代码版本、可访问入口、API仓库链接、可运行测试命令、当前报告、合成验收账号和恢复方案 |
+| 助教检查 | 在正常上课教室进行，先于老师预约；原型能打开运行，后端已部署服务器，API 放入 API 仓库并现场调用；本人后端分层单元测试现场运行，展示覆盖率报告 | 固定代码版本、可访问入口、Apifox文档及对应版本、可运行测试命令、当前报告、合成验收账号和恢复方案 |
 | 老师口头检查 | 上午在211，下午地点待确认；讨论结构化设计、需求、代码、测试和API，不重复展示UI；每位成员都要发言，不发言者0分；迟到超过30分钟该次预约无效 | 组内分配主讲和补充，准备模型与代码定位，提前到场；预约时间及下午地点另行核实 |
 | 课程关系 | 与 JavaEE 合并检查；非 JavaEE 同学需告知老师 | 明确本人课程情况，不代替老师决定成绩或检查口径 |
 
@@ -14,24 +14,24 @@
 
 ## 2. 先确认什么已经有证据
 
-用户提供的服务入口为 [Swagger / API设计](http://124.70.42.35:8080/swagger-ui/index.html?url=/api-design/openapi.yaml)。2026-10-27 的只读核对收到首页、健康端点、静态 OpenAPI 和运行时 API 文档的 200 响应，健康体为 `UP`。这只证明当时入口可达且就绪查询成功，不证明某个登录、写操作、权限拒绝、重启持久化或完整部署流程通过。
+用户提供的 [Apifox API 文档](https://7u8ub108r6.apifox.cn/)作为文档主入口；[Swagger UI](http://124.70.42.35:8080/swagger-ui/index.html?url=/api-design/openapi.yaml)用于运行实例的在线调试。2026-10-27 的只读核对收到首页、健康端点、静态 OpenAPI 和运行时 API 文档的 200 响应，健康体为 `UP`。这只证明当时入口可达且就绪查询成功，不证明某个登录、写操作、权限拒绝、重启持久化或完整部署流程通过。
 
 | 材料/现象 | 能证明 | 还不能证明 |
 | --- | --- | --- |
 | Vue 原型正常打开、合成账号可交互 | 原型页面和内存交互可用 | 已连接 Java、使用真实 Cookie、数据持久化 |
-| 静态 OpenAPI 可下载 | 设计文件可访问 | 运行接口全部符合设计，或 API 已放入要求的独立 API 仓库 |
+| Apifox与静态OpenAPI可访问 | 接口文档和仓库契约均可查阅 | 运行接口全部符合设计；现场仍需核对版本与实际调用 |
 | `/api/v1/health` 返回 UP | 应用接受流量且一次 `SELECT 1` 成功 | 所有业务正确、事务和权限隔离、CPU/内存/吞吐达标 |
 | MockMvc + H2 测试通过 | 该版本在测试上下文中的跨层行为 | 真实网络、Nginx、MySQL差异和云端持久化 |
 | 隔离层测试通过 | 选定边界和替身条件下的模块逻辑 | 未覆盖路径、实际依赖配置、跨层集成 |
 | JaCoCo 报告生成 | 实际执行路径的覆盖统计 | 需求覆盖完整、断言有效，或存在某个未规定的合格百分比 |
 
-本仓库的 `api/openapi.yaml` 是单仓库内的 API 设计位置。助教要求的“API 仓库”若指独立仓库，应提供实际仓库链接及文件版本；仅有 Swagger URL 或 `api/` 目录不能自行等同为已满足。未确认的项目保留“待核实”，不要编造链接。
+仓库内的 `api/openapi.yaml` 是版本化契约，Apifox 是公开文档入口，Swagger 用于实际接口调试。提交前应核对三处的版本、路径和请求定义一致；不一致时先记录并修正差异。
 
 ## 3. 助教现场执行顺序
 
 1. 展示本地和服务器版本信息，说明它们是否一致。记录提交 SHA、分支、Java/数据库版本和数据来源；代码刚更新而服务器未更新时，应明确说明。
 2. 打开原型，完成登录、首次改密、用户/组织、角色授权、台账等约定交互。说明此原型使用 mock，刷新后内存重建；只展示必要路径。
-3. 打开静态 OpenAPI 和 API 仓库对应版本，选一个查询、一个受控变更和一个拒绝场景，解释请求字段、Cookie、预期状态码及响应。
+3. 打开静态 OpenAPI 和 Apifox与仓库契约对应版本，选一个查询、一个受控变更和一个拒绝场景，解释请求字段、Cookie、预期状态码及响应。
 4. 在授权的合成验收环境现场调用真实后端。先健康，再登录与 Cookie，再改密或业务查询，再验证无权/越界；写入使用可清理合成对象。未获得操作服务器授权时只准备命令和数据，不执行写入、压测或重启。
 5. 各后端负责人现场运行本人层次的隔离测试，说明被测对象、替身、输入、断言和失败路径。随后说明跨层 `Stage1ApiTest` 与独立单元测试的不同作用。
 6. 打开本轮 JaCoCo HTML 报告，进入本人负责类查看行/分支和未覆盖位置；说明哪些通过证据来自单测、集成或真HTTP，不报未测百分比。
@@ -72,7 +72,7 @@ mvn -f backend-procedural/pom.xml "-Dtest=*ServiceTest,*ControllerTest,*MapperTe
 | 2 陈清香 | [路由](../../frontend/src/router/index.js)、[会话](../../frontend/src/stores/auth.js)、[用户页](../../frontend/src/views/UsersView.vue)、[组织页](../../frontend/src/views/DepartmentsView.vue) | 首次改密如何阻断；按钮禁用为何不是安全边界；过滤为何回第一页；mock与真后端如何区分 |
 | 3 杨昕桐 | [共享策略](../../frontend/src/authorization/rbac0-policy.js)、[授权页](../../frontend/src/views/RoleGrantsView.vue)、[目录映射](../../frontend/src/api/fixtures/catalog.js) | 同码范围合并、read依赖、全量草稿/分页、409与500、过期响应；继承/约束为何仍为后续静态页 |
 | 4 王信凯 | [AuthService](../../backend-procedural/src/main/java/com/municipal/rbac/procedural/service/AuthService.java)、[AuthorizationService](../../backend-procedural/src/main/java/com/municipal/rbac/procedural/service/AuthorizationService.java)、[UserService](../../backend-procedural/src/main/java/com/municipal/rbac/procedural/service/UserService.java) | Cookie与凭据版本；SELF/DEPT/ALL；源目标和迁入部门检查；自保护；用户角色版本及并发边界 |
-| 5 胡俊朗 | [RoleService](../../backend-procedural/src/main/java/com/municipal/rbac/procedural/service/RoleService.java)、[Mapper目录](../../backend-procedural/src/main/java/com/municipal/rbac/procedural/mapper)、[详细设计](../design/detailed-design.md) | 行锁/CAS/事务各解决什么；失败回滚；管理类角色识别；为什么JDBC不等于JPA；二期OO设计尚未实现什么 |
+| 5 胡俊朗 | [RoleService](../../backend-procedural/src/main/java/com/municipal/rbac/procedural/service/RoleService.java)、[Mapper目录](../../backend-procedural/src/main/java/com/municipal/rbac/procedural/mapper)、[详细设计](../design/detailed-design.adoc) | 行锁/CAS/事务各解决什么；失败回滚；管理类角色识别；为什么JDBC不等于JPA；二期OO设计尚未实现什么 |
 | 6 孙逸轩 | [OpenAPI](../../api/openapi.yaml)、[覆盖表](requirement-coverage.md)、[后端集成测试](../../backend-procedural/src/test/java/com/municipal/rbac/procedural/Stage1ApiTest.java)、[HTTP检查](../../scripts/smoke_http.py) | 41条需求如何追溯；契约与运行API如何比较；单测/集成/现场调用证据不同；覆盖率与性能口径 |
 
 上述安排是按既有责任表做的准备路线，不替代实际贡献。每人应能打开并解释自己的代码和测试，再由相关成员补充跨模块问题；不能让一个人替所有人讲完。
@@ -185,6 +185,6 @@ DTO负责格式，Service负责权限、存在性和业务关系，数据库唯�
 
 - 每人能在1～2分钟内说清本人模块的输入、输出、依赖、失败场景和至少一个真实断言；再准备深入追问，而不是背函数名。
 - 逐项核对[41条覆盖表](requirement-coverage.md)，优先练未登录、无角色、首次改密、跨范围、旧版本409、回滚、停用/重置旧会话失效这些拒绝路径。
-- 本地与服务器版本、API仓库文件版本、报告版本有记录；若不同，当场说明差异。
+- 本地与服务器版本、Apifox与仓库契约版本、报告版本有记录；若不同，当场说明差异。
 - 无法现场运行的测试或尚未执行的全量导入/性能/持久化保留实际状态；不要把历史截图搬到新版本下当作本次结果。
 - 助教完成原型和运行检查后，老师环节转向结构化模型、需求到代码/测试的追溯，每人发言；上午211、下午地点、预约时间和本人JavaEE情况提前确认。

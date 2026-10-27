@@ -81,4 +81,4 @@ classDiagram
 - 功能点与六动作在导入/初始化时生成 `sys_permission` 实际记录，权限码稳定为 `系统码:fNNN:动作`；不由客户端任意创建。
 - 同码授权取 `ALL > DEPT > SELF`，不同动作各自保留范围；`rbac:*` 管理码由已授予清单码在服务层派生，不另直接写入目录表。
 
-物理字段、唯一键和删除行为以[数据库设计](../database/database-design.md)、[数据字典](../database/data-dictionary.md)和[V001迁移](../../database/migrations/V001__create_core_tables.sql)为准。继承边、约束和审计表不属于当前模型。
+物理字段、唯一键和删除行为以[数据库设计](../database/database-design.adoc)、[数据字典](../database/data-dictionary.md)和[V001迁移](../../database/migrations/V001__create_core_tables.sql)为准。继承边、约束和审计表不属于当前模型。

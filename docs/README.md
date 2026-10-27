@@ -7,7 +7,8 @@
 | 代码与口试 | [代码阅读路线](stage1/code-reading-guide.md)、[结构化设计](design/structured-design.md)、[边界清单](stage1/review-checklist.md)、[口试对照](stage1/oral-review.md) |
 | 六人 GitHub 操作 | [使用手册](guides/github-team-manual.md) |
 | 需求 | [需求规格说明书](requirements/req-spec.md)、[需求访谈记录](requirements/grill-record.md)、[范围](requirements/scope.md)、[用例模板](requirements/use-cases.md)、[待确认问题](requirements/questions.md) |
-| UML | [模型图集](uml/README.md)、[数据库设计](database/database-design.md) |
+| 设计 | [结构化设计](design/structured-design.md)、[后端详细设计（AsciiDoc）](design/detailed-design.adoc) |
+| UML | [模型图集](uml/README.md)、[数据库设计（AsciiDoc）](database/database-design.adoc) |
 | 数据库 | [数据字典](database/data-dictionary.md)、[导入质量规则](database/import-rules.md) |
 | 界面设计 | [第一阶段界面原型](design/stage1-ui-prototype.md)、[成员 2 前端约定](design/member2-frontend-contract.md)、[成员 3 RBAC0 设计](design/member3-rbac0-design.md) |
 | 技术决定 | [单仓库与双后端](decisions/0001-monorepo.md) |

@@ -1,6 +1,6 @@
 # 成员 4 第一阶段：RBAC0 面向功能后端设计
 
-历史分支设计记录：下文是成员4/5的原始交付，保留作者与范式说明。当前集成设计见[详细设计](detailed-design.md)，API采用[统一契约](../../api/openapi.yaml)，本次实测见[验证记录](../stage1/verification-record.md)。旧的H2独立表、accountType、小写范围和47项结果不能直接用于当前版本。
+历史分支设计记录：下文是成员4/5的原始交付，保留作者与范式说明。当前集成设计见[详细设计](detailed-design.adoc)，API采用[统一契约](../../api/openapi.yaml)，本次实测见[验证记录](../stage1/verification-record.md)。旧的H2独立表、accountType、小写范围和47项结果不能直接用于当前版本。
 
 作者：王信凯（成员 4）、胡俊朗（成员 5）共同完成
 
@@ -8,7 +8,7 @@
 
 任务：首批任务「RBAC0 功能分解与接口草案」
 
-状态：设计草案交付，且后端已按 Java + Spring Boot 完成实现并通过集成测试验证（`backend-procedural/`，47 个用例全部通过，JaCoCo 指令覆盖 95%；详见 [README](../../backend-procedural/README.md) 与 [详细设计](detailed-design.md)）。实现按合理默认值编写，待全组统一后再修改（Q-02/Q-03/会话方式）。
+状态：设计草案交付，且后端已按 Java + Spring Boot 完成实现并通过集成测试验证（`backend-procedural/`，47 个用例全部通过，JaCoCo 指令覆盖 95%；详见 [README](../../backend-procedural/README.md) 与 [详细设计](detailed-design.adoc)）。实现按合理默认值编写，待全组统一后再修改（Q-02/Q-03/会话方式）。
 
 ## 1. 我负责什么，为什么先做这些
 
@@ -20,7 +20,7 @@
 | --- | --- | --- |
 | 功能分解与授权设计 | 本文件 | 授权过程、职责分层、基础授权算法、失败分支 |
 | 后端接口草案 | [member4-procedural-backend-api.md](../../api/proposals/member4-procedural-backend-api.md) | 登录、角色、用户角色、目录等接口的输入输出与认证 |
-| 详细设计 | [detailed-design.md](detailed-design.md) | 架构、机制、模块、接口、测试的完整设计说明书 |
+| 详细设计 | [detailed-design.adoc](detailed-design.adoc) | 架构、机制、模块、接口、测试的完整设计说明书 |
 | 学习与答辩说明 | [member4-procedural-rbac0-explained.md](../guides/member4-procedural-rbac0-explained.md) | 逐步解释做了什么、为什么、怎样演示 |
 | 自检记录 | [member4-procedural-rbac0-verification.md](../testing/member4-procedural-rbac0-verification.md) | 本次文档一致性与仓库检查结果 |
 

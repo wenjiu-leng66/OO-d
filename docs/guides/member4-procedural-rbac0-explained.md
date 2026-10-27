@@ -14,7 +14,7 @@
 | --- | --- | --- |
 | 功能分解与授权设计 | 授权过程、职责分层、基础授权算法、失败分支 | [设计说明](../design/member4-procedural-rbac0-design.md) |
 | 后端接口草案 | 登录、角色、用户角色、目录等接口的输入输出与认证 | [接口草案](../../api/proposals/member4-procedural-backend-api.md) |
-| 详细设计 | 架构、机制、模块、接口与测试设计 | [详细设计说明书](../design/detailed-design.md) |
+| 详细设计 | 架构、机制、模块、接口与测试设计 | [详细设计说明书](../design/detailed-design.adoc) |
 | 自检记录 | 文档一致性、仓库检查、验证结果 | [验证记录](../testing/member4-procedural-rbac0-verification.md) |
 
 当前交付已包含 Java / Spring 后端（含 H2 内存库与合成演示数据），已通过集成测试与运行时冒烟验证，可用 Swagger UI 在线调试。代码按同一设计实现，技术栈确认后只需调整默认假设（见 [后端 README](../../backend-procedural/README.md)）。
