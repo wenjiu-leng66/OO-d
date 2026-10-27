@@ -1,0 +1,126 @@
+= 领域模型（分析类图）
+
+一期 RBAC0 的业务概念与关系。对应需求
+USER、ROLE、DEPT、CAT、GRANT、AUTHZ。
+
+[mermaid]
+----
+classDiagram
+  direction LR
+
+  class Department {
+    +String name
+    +DeptType type
+    +int level
+  }
+
+  class User {
+    +String username
+    +String realName
+    +UserStatus status
+  }
+
+  class Role {
+    +String code
+    +String name
+    +boolean builtin
+    +RoleStatus status
+  }
+
+  class Permission {
+    +String code
+  }
+
+  class System {
+    +String code
+    +String name
+  }
+
+  class Module {
+    +String name
+  }
+
+  class FunctionPoint {
+    +String code
+    +String name
+  }
+
+  class Action {
+    <<enumeration>>
+    read
+    create
+    edit
+    approve
+    export
+    delete
+  }
+
+  class DataScope {
+    <<enumeration>>
+    ALL
+    DEPT
+    SELF
+  }
+
+  class DeptType {
+    <<enumeration>>
+    HQ
+    HQ_DEPT
+    BRANCH
+    BRANCH_DEPT
+    PROJECT
+  }
+
+  class UserStatus {
+    <<enumeration>>
+    PENDING_PASSWORD_CHANGE
+    ENABLED
+    DISABLED
+  }
+
+  class RoleStatus {
+    <<enumeration>>
+    ENABLED
+    DISABLED
+  }
+
+  class UserRoleAssignment {
+    +userId
+    +roleId
+  }
+
+  class RolePermissionGrant {
+    +roleId
+    +permissionId
+    +scope
+  }
+
+  Department "1" --> "*" Department : 上级 / 下级
+  Department "1" --> "*" User : 所属
+  Department "0..1" --> "1" User : 负责人
+
+  User "1" -- "*" UserRoleAssignment
+  Role "1" -- "*" UserRoleAssignment
+
+  Role "1" -- "*" RolePermissionGrant
+  Permission "1" -- "*" RolePermissionGrant
+
+  System "1" --> "*" Module : 包含
+  Module "1" --> "*" FunctionPoint : 包含
+  FunctionPoint "1" --> "*" Permission : 派生
+  Action "1" --> "*" Permission : 动作
+
+  RolePermissionGrant --> DataScope : 授予范围
+  Department --> DeptType : 类型
+  User --> UserStatus : 状态
+  Role --> RoleStatus : 状态
+
+  note for RolePermissionGrant "数据范围是「授予关系」的属性：同一个权限码，在不同角色下可以有不同的范围"
+  note for Permission "权限码 = 系统短码:功能点编号:动作，例如 hr:f046:edit。由功能点 × 动作派生，不人工维护"
+  note for Department "DEPT 范围 = 本部门 + 全部下级部门（沿 parent 求子树）"
+----
+
+____
+读图：用户与角色、角色与权限都是多对多，中间各有一张授予关系；*数据范围挂在角色—权限的授予关系上*，不在用户或角色上。权限不是人工清单，由功能点
+× 动作派生。
+____

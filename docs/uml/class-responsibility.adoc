@@ -1,0 +1,117 @@
+= 设计类图与类职责
+
+一期关键设计类。边界类接收 HTTP，控制类编排用例，仓储类只做
+SQL；鉴权集中在 `AuthorizationService`。
+
+[mermaid]
+----
+classDiagram
+  direction TB
+
+  class AuthController {
+    <<boundary>>
+  }
+  class UserController {
+    <<boundary>>
+  }
+  class RoleController {
+    <<boundary>>
+  }
+  class DepartmentController {
+    <<boundary>>
+  }
+  class PortalController {
+    <<boundary>>
+  }
+
+  class AuthService {
+    <<control>>
+  }
+  class UserService {
+    <<control>>
+  }
+  class RoleService {
+    <<control>>
+  }
+  class DepartmentService {
+    <<control>>
+  }
+  class PortalService {
+    <<control>>
+  }
+  class AuthorizationService {
+    <<control>>
+  }
+
+  class UserMapper {
+    <<repository>>
+  }
+  class RoleMapper {
+    <<repository>>
+  }
+  class DepartmentMapper {
+    <<repository>>
+  }
+
+  class User {
+    <<entity>>
+  }
+  class Role {
+    <<entity>>
+  }
+  class Permission {
+    <<entity>>
+  }
+  class Department {
+    <<entity>>
+  }
+
+  class ApiException {
+    <<exception>>
+  }
+  class GlobalExceptionHandler {
+    <<boundary>>
+  }
+
+  AuthController --> AuthService
+  UserController --> UserService
+  RoleController --> RoleService
+  DepartmentController --> DepartmentService
+  PortalController --> PortalService
+
+  AuthController ..> AuthorizationService
+  UserController ..> AuthorizationService
+  RoleController ..> AuthorizationService
+  DepartmentController ..> AuthorizationService
+  PortalController ..> AuthorizationService
+
+  AuthService --> UserMapper
+  UserService --> UserMapper
+  UserService --> RoleMapper
+  RoleService --> RoleMapper
+  DepartmentService --> DepartmentMapper
+  PortalService --> UserMapper
+
+  AuthorizationService --> UserMapper
+  AuthorizationService --> RoleMapper
+  AuthorizationService --> DepartmentMapper
+
+  UserService ..> User
+  RoleService ..> Role
+  AuthorizationService ..> Permission
+  DepartmentService ..> Department
+
+  AuthService ..> ApiException
+  UserService ..> ApiException
+  RoleService ..> ApiException
+  GlobalExceptionHandler ..> ApiException
+
+  note for AuthorizationService "认证 → 权限码 → 数据范围 → 目标对象，四步短路"
+  note for UserMapper "所有查询先裁剪范围，再筛选与分页"
+----
+
+____
+读图：依赖单向 Controller → Service → Mapper；Controller 不直接依赖
+Mapper；所有 Controller 都依赖
+`AuthorizationService`，鉴权口径只有一处。完整类清单见代码，本图只画关键类。
+____
