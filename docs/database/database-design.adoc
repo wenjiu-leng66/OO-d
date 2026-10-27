@@ -1,0 +1,802 @@
+= 数据库设计（一期 RBAC0）
+:doctype: article
+:toc: left
+:toclevels: 3
+:lang: zh-CN
+
+[cols="1,3",options="header"]
+|===
+|项目 |内容
+
+|文档版本
+|V1.0
+
+|日期
+|2026-10-27
+
+|适用范围
+|第一阶段 RBAC0
+
+|主责
+|成员 1 郑凯
+
+|权威脚本
+|`database/migrations/V001__create_core_tables.sql`
+
+|逐字段字典
+|`docs/database/data-dictionary.adoc`
+|===
+
+== 1. 引言
+
+=== 1.1 编写目的
+
+本文档说明一期 RBAC0 的数据库设计：概念模型、逻辑结构、物理设计、完整性约束、索引、视图、并发控制、导入与迁移。
+
+逐字段的类型、可空、默认值、来源与删除策略见附录 A 指向的数据字典，本文不重复整张字典。
+
+=== 1.2 范围
+
+* 本期表结构：10 张表 + 1 个视图，覆盖用户、部门、角色、权限、资源目录与两类分配关系。
+* 本期不建：角色层级、互斥/基数约束、审计日志、登录失败计数；这些在 §11 说明扩展点。
+* 部门与资源目录只读，由离线导入维护；运行期只写用户、角色、分配关系。
+
+=== 1.3 技术环境
+
+[cols="2,3",options="header"]
+|===
+|项 |选择
+
+|数据库
+|MySQL 8.4 LTS（最低 8.0.16，CHECK 约束生效）
+
+|存储引擎
+|InnoDB
+
+|字符集 / 排序
+|`utf8mb4` / `utf8mb4_0900_ai_ci`
+
+|迁移
+|Flyway 命名，正向 `V001__...`，回滚 `U001__...`
+
+|测试库
+|H2 仅用于自动测试，不作为验收环境
+|===
+
+== 2. 设计目标与原则
+
+=== 2.1 目标
+
+* 一套表结构同时服务面向功能后端与后续面向对象后端。
+* 支持 RBAC0 的授权语义：并集、默认拒绝、三种数据范围。
+* 支持并发安全的整组替换：版本号比较、冲突可感知。
+* 支持原始 Excel 的离线导入、重复执行与数量核对。
+* 不把真实员工数据、密码或哈希提交到公开仓库。
+
+=== 2.2 设计原则
+
+. *单一结构*：全组只有一套迁移维护的表结构，两套后端各连独立库实例。
+. *稳定标识*：权限码、功能点编号、系统短码在导入后不随显示名称变化。
+. *约束尽量前移*：能由主键、唯一键、外键、CHECK 表达的，放在数据库层。
+. *业务规则留服务层*：唯一管理员、内置角色保护、范围判定、版本冲突等由 Service 校验，便于测试与演进。
+. *受控冗余*：少量冗余字段用于查询或导入核对，需在 §5 明确来源与同步方式。
+. *只增不改迁移*：已应用的迁移不改写，变更通过新迁移完成。
+. *最小权限*：应用账号只拥有本库增删改查权限，root 不交给应用。
+
+== 3. 概念模型
+
+=== 3.1 核心实体
+
+[cols="2,3",options="header"]
+|===
+|实体 |说明
+
+|部门 Department
+|树形组织，根为总公司；类型 5 种；可有 1 名负责人
+
+|用户 User
+|员工账号；属于 1 个部门；可有多个角色；有启用/停用与首次改密状态
+
+|角色 Role
+|权限的集合；内置角色 6 个不可删；有启用/停用与授权版本
+
+|权限 Permission
+|功能点与动作的组合；权限码 `系统:功能点:动作`
+
+|系统 / 模块 / 功能点
+|资源目录三级；只读；由清单导入
+
+|动作 Action
+|6 种：查看、新增、编辑、审批、导出、删除
+
+|用户—角色分配
+|多对多；记录分配时间
+
+|角色—权限授予
+|多对多；每条带数据范围
+|===
+
+=== 3.2 关系
+
+[source,mermaid]
+----
+erDiagram
+  SYS_DEPT ||--o{ SYS_DEPT : parent
+  SYS_DEPT ||--o{ SYS_USER : contains
+  SYS_DEPT |o--o| SYS_USER : manager
+  SYS_USER ||--o{ SYS_USER_ROLE : has
+  SYS_ROLE ||--o{ SYS_USER_ROLE : assigned
+  SYS_ROLE ||--o{ SYS_ROLE_PERMISSION : grants
+  SYS_PERMISSION ||--o{ SYS_ROLE_PERMISSION : granted
+  APP_SYSTEM ||--o{ APP_MODULE : contains
+  APP_MODULE ||--o{ APP_FUNCTION : contains
+  APP_FUNCTION ||--o{ SYS_PERMISSION : derives
+  SYS_ACTION ||--o{ SYS_PERMISSION : action
+----
+
+=== 3.3 关系说明
+
+* 部门自关联：`parent_id` 指向上级，根节点为 NULL；一个部门可有多个下级。
+* 部门—用户：一个部门多个用户，一个用户一个部门；`admin` 不属于任何部门。
+* 部门负责人：最多 1 名，存 `sys_dept.manager_user_id`；用户删除时置空。
+* 用户—角色：多对多，`sys_user_role` 记录分配时间。
+* 角色—权限：多对多，`sys_role_permission.data_scope` 记录该授权的数据范围。
+* 资源目录：系统 → 模块 → 功能点；功能点 × 动作 = 权限。
+
+=== 3.4 数据范围模型
+
+* `ALL`：全部数据。
+* `DEPT`：本人部门及全部下级部门。
+* `SELF`：仅本人。
+* 范围是“角色—权限”授予关系的属性，不是角色或用户的属性。
+* 同一权限码被多个角色授予时取最大范围：`ALL > DEPT > SELF`。
+* 不同权限码分别计算，查看范围不放大编辑范围。
+
+== 4. 逻辑设计
+
+=== 4.1 表清单
+
+[cols="2,3,2",options="header"]
+|===
+|表 |用途 |类型
+
+|`sys_dept`
+|部门树、类型、负责人
+|主数据，只读
+
+|`sys_user`
+|账号、部门、状态、角色版本
+|业务数据
+
+|`sys_role`
+|角色、内置标记、状态、授权版本
+|业务数据
+
+|`app_system`
+|软件系统
+|目录，只读
+
+|`app_module`
+|功能模块
+|目录，只读
+
+|`app_function`
+|功能点
+|目录，只读
+
+|`sys_action`
+|动作字典
+|目录，只读
+
+|`sys_permission`
+|权限 = 功能点 × 动作
+|目录，只读
+
+|`sys_user_role`
+|用户—角色分配
+|关系数据
+
+|`sys_role_permission`
+|角色—权限授予，带范围
+|关系数据
+
+|`v_user_permission`
+|用户有效权限视图
+|只读视图
+|===
+
+=== 4.2 主键与唯一键
+
+[cols="2,3",options="header"]
+|===
+|表 |主键 / 唯一键
+
+|`sys_dept`
+|PK `id`；UK `name`
+
+|`sys_user`
+|PK `id`；UK `username`、`phone`
+
+|`sys_role`
+|PK `id`；UK `code`
+
+|`app_system`
+|PK `id`；UK `code`、`name`
+
+|`app_module`
+|PK `id`；UK `(system_id, name)`
+
+|`app_function`
+|PK `id`；UK `code`、`(module_id, name)`
+
+|`sys_action`
+|PK `id`；UK `code`
+
+|`sys_permission`
+|PK `id`；UK `(function_id, action_id)`、`code`
+
+|`sys_user_role`
+|PK `(user_id, role_id)`
+
+|`sys_role_permission`
+|PK `(role_id, permission_id)`
+|===
+
+=== 4.3 外键与删除策略
+
+[cols="2,3,3",options="header"]
+|===
+|外键 |引用 |删除行为
+
+|`fk_dept_parent`
+|`sys_dept.id`
+|默认 RESTRICT；有下级时不能删
+
+|`fk_user_dept`
+|`sys_dept.id`
+|默认 RESTRICT；有用户的部门不能删
+
+|`fk_dept_manager`
+|`sys_user.id`
+|`ON DELETE SET NULL`；用户删除后负责人置空
+
+|`fk_ur_user`
+|`sys_user.id`
+|`ON DELETE CASCADE`
+
+|`fk_ur_role`
+|`sys_role.id`
+|`ON DELETE CASCADE`
+
+|`fk_rp_role`
+|`sys_role.id`
+|`ON DELETE CASCADE`
+
+|`fk_rp_perm`
+|`sys_permission.id`
+|`ON DELETE CASCADE`
+
+|`fk_module_system`
+|`app_system.id`
+|`ON DELETE CASCADE`
+
+|`fk_function_module`
+|`app_module.id`
+|`ON DELETE CASCADE`
+
+|`fk_perm_function`
+|`app_function.id`
+|`ON DELETE CASCADE`
+
+|`fk_perm_action`
+|`sys_action.id`
+|默认 RESTRICT
+|===
+
+删除策略汇总：
+
+* 删除用户：级联删除用户角色；负责的部门保留，负责人置空；其他外键无引用。
+* 删除角色：级联删除角色授权与用户角色；受影响用户的 `role_version` 由 Service 递增。
+* 删除部门/目录：一期不提供接口，只读；数据库外键阻止误删。
+* 一期采用物理删除，没有软删除字段。
+
+=== 4.4 完整性规则
+
+[cols="2,3,2",options="header"]
+|===
+|规则 |实现层 |说明
+
+|工号唯一
+|DB `uk_user_username`
+|导入与新增都受约束
+
+|手机号非空时唯一
+|DB `uk_user_phone`
+|MySQL 允许多个 NULL
+
+|部门类型合法
+|DB `ck_dept_type`
+|5 种枚举
+
+|状态、首次改密、性别合法
+|DB CHECK
+|0/1、M/F
+
+|数据范围合法
+|DB `ck_rp_scope`
+|ALL/DEPT/SELF
+
+|权限 = 功能点 × 动作
+|DB `uk_perm`
+|一条权限唯一对应一组
+
+|权限码唯一
+|DB `uk_perm_code`
+|鉴权精确匹配
+
+|唯一超级管理员
+|Service
+|数据库不建部分唯一索引，避免导入顺序依赖
+
+|内置角色不可删
+|Service
+|`builtin = 1` 的 6 个角色
+
+|不能操作自己
+|Service
+|停用、删除、改角色
+
+|角色有用户时删除需确认
+|Service
+|`confirm=true`
+
+|默认拒绝
+|Service + 视图
+|查不到权限即拒绝
+|===
+
+=== 4.5 命名规范
+
+* 表：`sys_` 系统表，`app_` 资源目录；视图 `v_`。
+* 索引：`uk_` 唯一、`idx_` 普通、`fk_` 外键、`ck_` 检查。
+* 字段：小写下划线；时间字段 `created_at`、`updated_at`、`last_login_at`。
+* 权限码：`系统短码:功能点编号:动作`，如 `hr:f046:edit`。
+
+== 5. 物理设计
+
+=== 5.1 数据类型
+
+[cols="2,2,3",options="header"]
+|===
+|类型 |使用 |理由
+
+|`INT`
+|主键、外键、版本号
+|数据量小，4 字节足够；接口层转字符串
+
+|`TINYINT`
+|状态、内置标记、层级、动作 ID
+|取值少，节省空间
+
+|`VARCHAR(n)`
+|名称、编码、权限码、哈希
+|按实际长度限制，避免滥用 TEXT
+
+|`CHAR(1)`
+|性别
+|固定 1 位
+
+|`DATETIME`
+|创建、更新、最后登录
+|不需要时区转换；统一服务器时区
+
+|`DECIMAL`
+|不涉及
+|金额不在本期范围
+|===
+
+=== 5.2 字符集与存储
+
+* 全库 `utf8mb4`，支持中文与 emoji。
+* InnoDB：事务、行锁、外键。
+* 每张表带 `COMMENT`，字段带 `COMMENT`，便于反查。
+* 不使用分区、不建独立表空间；数据量小。
+
+=== 5.3 索引设计
+
+[cols="3,2,3",options="header"]
+|===
+|索引 |表 |用途
+
+|`uk_dept_name`
+|`sys_dept`
+|部门名称唯一
+
+|`idx_dept_parent`
+|`sys_dept`
+|按上级查下级，求子树
+
+|`uk_user_username`、`uk_user_phone`
+|`sys_user`
+|登录与唯一性
+
+|`idx_user_dept`
+|`sys_user`
+|按部门筛选用户
+
+|`idx_user_real_name`
+|`sys_user`
+|按姓名搜索
+
+|`uk_role_code`
+|`sys_role`
+|角色编码唯一
+
+|`uk_system_code`、`uk_system_name`
+|`app_system`
+|系统编码与名称唯一
+
+|`uk_module (system_id, name)`
+|`app_module`
+|同系统下模块名唯一
+
+|`uk_function_code`、`uk_function (module_id, name)`
+|`app_function`
+|功能点编码唯一
+
+|`uk_action_code`
+|`sys_action`
+|动作码唯一
+
+|`uk_perm (function_id, action_id)`、`uk_perm_code`
+|`sys_permission`
+|功能点乘动作唯一；鉴权按码
+
+|`idx_ur_role`
+|`sys_user_role`
+|按角色查用户
+
+|`idx_rp_perm`
+|`sys_role_permission`
+|按权限查角色
+|===
+
+说明：
+
+* 主键均为聚簇索引，`sys_user_role` 主键 `(user_id, role_id)` 的最左前缀支持按用户鉴权。
+* `sys_role_permission` 主键 `(role_id, permission_id)` 支持按角色展开；按权限反查走 `idx_rp_perm`。
+* 未对 `status` 建索引：用户与角色量小，且查询通常带主键或唯一键。
+* 全量数据下的 `EXPLAIN ANALYZE` 尚待执行，不能声称已达到 10 ms 目标。
+
+=== 5.4 视图 `v_user_permission`
+
+定义要点：
+
+* 连接用户、用户角色、角色、角色授权、权限、动作、功能点、模块、系统。
+* 只统计 `sys_user.status = 1` 且 `sys_role.status = 1`。
+* 同一用户同一权限码跨角色合并，范围取最大：`ELT(MAX(FIELD(...)))`。
+* 查不到即无权限，对应默认拒绝。
+* 鉴权查询：`WHERE user_id = ? AND permission_code = ?`。
+
+性能与演进：
+
+* 视图是实时计算，没有物化；数据量小（1 万用户、2154 权限）时可接受。
+* 第二阶段加入角色继承时，把视图改为递归 CTE，调用方不变。
+* 若后续需要缓存，可在服务层加 Redis，不改变表结构。
+
+== 6. 关键设计决策
+
+=== 6.1 权限由功能点 × 动作派生
+
+清单有 359 个功能点、6 种动作，权限总数 2154。权限不是人工维护的清单，而是由 `app_function × sys_action` 派生。
+
+* 好处：新增功能点只改目录，不手工维护权限行。
+* 稳定：权限码不随显示名称变化，已有授权不失效。
+* 约束：`uk_perm (function_id, action_id)` 保证不重复派生。
+
+=== 6.2 数据范围挂在角色—权限关系上
+
+`sys_role_permission.data_scope` 是授权关系的属性：
+
+* 同一用户在不同功能上可以有不同范围。
+* 多角色同一权限码取最大范围，不同码独立。
+* 范围不放在用户表或角色表，避免无法表达“这个功能 ALL、那个功能 SELF”。
+
+=== 6.3 两个版本号
+
+[cols="2,2,3",options="header"]
+|===
+|字段 |表 |用途
+
+|`role_version`
+|`sys_user`
+|用户角色集合的版本，整组替换时 CAS
+
+|`permission_version`
+|`sys_role`
+|角色授权集合的版本，整组替换时 CAS
+|===
+
+两者独立：改用户角色动前者，改角色授权动后者；冲突返回 409 与当前版本。
+
+=== 6.4 部门采用邻接表
+
+* `sys_dept.parent_id` 自关联，根节点 NULL。
+* 查询子树时一次读出全部部门，在 Java 中迭代；111 个节点，内存计算足够。
+* 不在本期使用递归 CTE 或闭包表；数据量增长后可改用递归 CTE。
+* 外键防不住环，导入脚本拒绝有环的源表；未来提供修改上级时先做子树检查。
+
+=== 6.5 内置角色与唯一管理员
+
+* 6 个内置角色（清单 5 个 + 部门管理员）用 `builtin = 1` 标记，不可删除。
+* 唯一管理员 `admin` 由导入保证；数据库不建部分唯一索引，避免导入顺序依赖。
+* 保护规则（不能停用/删除自己、不能改自己角色、不能动唯一 admin）在 Service 层实现，返回 409。
+
+=== 6.6 物理删除，不做软删除
+
+* 一期用户与角色可删除，删除后关联级联清理。
+* 不做软删除：没有 `deleted_at`，避免查询到处带过滤条件。
+* 代价：删除不可恢复，也没有历史审计；审计日志属于阶段三。
+
+=== 6.7 不建枚举表、不建 JSON 列
+
+* 动作单独建 `sys_action`，因为权限码需要动作码与名称，且要参与派生。
+* 状态、性别、部门类型、范围用 TINYINT/VARCHAR + CHECK，不建枚举表。
+* 不使用 JSON 列：核心字段需要索引、连接和约束，JSON 不适合。
+
+=== 6.8 不建审计表
+
+* 登录日志、授权变更日志属于阶段三，一期不建表。
+* 阶段三再新增 `sys_audit_log`，不改现有表。
+
+== 7. 并发与一致性
+
+=== 7.1 版本号 CAS
+
+整组替换的并发控制：
+
+. 客户端 GET 读取集合与版本。
+. PUT 提交完整集合与版本。
+. 数据库执行 `UPDATE ... SET version = version + 1 WHERE id = ? AND version = ?`。
+. 影响行数为 0 即冲突，返回 409 与 `currentVersion`。
+. 影响行数为 1，继续在同一事务内替换关联。
+
+CAS 原子性由数据库保证，不靠应用层先查后判。
+
+=== 7.2 行锁与加锁顺序
+
+* 改角色或用户前先 `SELECT ... FOR UPDATE` 锁定目标行。
+* 用户角色替换要锁多个角色行：合并“原有 + 新的”角色，按角色 ID 数值升序逐个加锁。
+* 统一升序避免两个事务交叉等待形成死锁。
+* 删除角色也先锁角色行，再判断成员与删除。
+
+=== 7.3 隔离级别
+
+* MySQL 默认 `REPEATABLE READ`。
+* `SELECT ... FOR UPDATE` 为当前读加行锁；RR 下还会产生间隙锁。
+* 因此更需要统一加锁顺序，避免范围锁交叉。
+* 冲突的 `currentVersion` 通过锁定当前读获取，避免快照返回过期值。
+
+=== 7.4 事务边界
+
+* 事务只在 Service 层。
+* 整组替换、删除角色、重置密码等多步操作在同一事务内。
+* 任一步失败全部回滚，不留半套授权。
+* 删除角色后逐一对受影响用户递增 `role_version`。
+
+== 8. 数据导入与初始化
+
+=== 8.1 数据来源
+
+三份 Excel：
+
+* 部门信息表：111 个组织单元、负责人。
+* 应用软件功能权限清单：18 系统、115 模块、359 功能点、2154 权限、3549 条五角色授权。
+* 员工信息表：10000 名员工。
+
+原始文件放在被 Git 忽略的 `data/raw/`，不提交仓库。
+
+=== 8.2 导入流程
+
+. 读取三份 Excel，按清洗规则生成 SQL。
+. 创建部门与负责人；负责人按用户 ID 关联，不按姓名。
+. 创建系统、模块、功能点，派生权限。
+. 创建 5 个内置角色与授权，另加部门管理员 6 条授权，合计 3555。
+. 创建账号、初始密码哈希、初始角色。
+. 执行 `verify_import.sql` 核对数量、层级、授权与范围。
+
+=== 8.3 幂等与重复执行
+
+* 导入脚本可重复执行，除密码哈希外结果一致。
+* 使用唯一键与固定编号保证不重复插入。
+* 重复导入核对（T-12）当前待执行；不能用合成数据代替。
+
+=== 8.4 初始角色与数据范围
+
+按导入质量规则的映射：
+
+* 公司领导、部门经理、项目经理、普通员工按清单与岗位规则分配。
+* 部门经理对员工台账：查看 ALL、编辑 DEPT。
+* 普通员工对薪酬核算等：查看 SELF。
+* 部门管理员只给本部门及下级用户分配业务角色。
+
+== 9. 迁移、回滚与运维
+
+=== 9.1 迁移
+
+* Flyway 命名：`V001__create_core_tables.sql`。
+* 已应用迁移不改写；变更用新版本迁移。
+* 每个成员使用独立数据库；集成库由指定负责人执行。
+* 迁移前备份；涉及数据损失的操作先评审。
+
+=== 9.2 回滚
+
+* 每个迁移配回滚脚本：`database/rollback/U001__create_core_tables.sql`。
+* 回滚脚本手工执行，不在应用启动时自动运行。
+* 回滚顺序与正向相反，先删视图再删表。
+
+=== 9.3 备份与恢复
+
+* 部署使用命名卷 `mysql_data`；`compose down` 不删卷，`down -v` 才删。
+* 重启持久化已验证：创建临时账号 → down → up → 账号仍在 → 清理。
+* 生产环境应配置定期备份与恢复演练；课程演示仅验证卷持久化。
+
+=== 9.4 运维检查
+
+* `compose ps` 三容器 healthy。
+* `/api/v1/health` 返回 `{"status":"UP"}`。
+* 迁移版本与源码 SHA 记录在部署记录中。
+* 全量数据性能用 `EXPLAIN ANALYZE` 验证；当前待执行。
+
+== 10. 安全设计
+
+=== 10.1 密码
+
+* 只存带算法前缀的哈希，不存明文。
+* PBKDF2（`{pbkdf2@SpringSecurity_v5_8}`），兼容已有 BCrypt 校验。
+* 列宽 255，足够容纳 BCrypt、PBKDF2 等格式。
+* 初始密码由部署参数提供，不写入仓库。
+
+=== 10.2 账号与权限
+
+* 应用数据库账号只拥有本库增删改查权限，不使用 root。
+* 数据库端口不发布公网，只在 Compose 内部网络。
+* 全组只有一套表结构；各成员开发库独立。
+
+=== 10.3 数据保护
+
+* 仓库不提交真实员工姓名、电话、密码哈希、原始 Excel、数据库备份。
+* 演示数据为合成数据，账号密码只用于课程演示。
+* 日志不记录密码、哈希、完整 Cookie。
+
+=== 10.4 SQL 安全
+
+* Mapper 全部参数化 SQL，不拼接用户输入。
+* ID 长度与格式校验，避免畸形数字进入 SQL。
+* 台账只允许修改电话、邮箱，其他字段拒绝。
+
+=== 10.5 审计
+
+* 一期没有审计表；授权变更只靠应用日志。
+* 阶段三新增 `sys_audit_log`，记录操作人、时间、目标、动作。
+
+== 11. 扩展点
+
+=== 11.1 RBAC1 角色继承
+
+计划新增：
+
+[source,sql]
+----
+CREATE TABLE sys_role_hierarchy (
+    parent_role_id INT NOT NULL,
+    child_role_id  INT NOT NULL,
+    PRIMARY KEY (parent_role_id, child_role_id),
+    CONSTRAINT fk_rh_parent FOREIGN KEY (parent_role_id) REFERENCES sys_role (id) ON DELETE CASCADE,
+    CONSTRAINT fk_rh_child  FOREIGN KEY (child_role_id)  REFERENCES sys_role (id) ON DELETE CASCADE,
+    CONSTRAINT ck_rh_not_self CHECK (parent_role_id <> child_role_id)
+);
+----
+
+* 有效权限视图改为递归 CTE，沿上级展开。
+* 保存继承时检查自环与间接环；停用角色断开继承路径。
+* 现有表结构不需要改，只加新表与视图。
+
+=== 11.2 RBAC2 约束
+
+计划新增：
+
+* `sys_role_constraint`：约束类型（SSD/DSD/基数）、参数。
+* `sys_role_constraint_member`：约束涉及的角色。
+* 约束检查在 Service 层；数据库触发器可作为兜底，但会分散规则，二期再评估。
+
+=== 11.3 审计与登录锁定
+
+* `sys_audit_log`：追加写，不提供修改与删除接口。
+* 登录失败计数与锁定：可在 `sys_user` 加 `login_failure_count`、`locked_until`，或单独建表。
+* 这些字段/表不在 V001 创建，避免一期表结构承担未实现功能。
+
+== 12. 已知限制
+
+[cols="2,3",options="header"]
+|===
+|限制 |影响与说明
+
+|无软删除
+|删除不可恢复，无历史版本
+
+|无审计表
+|授权变更无法追溯；阶段三补
+
+|唯一管理员由应用保证
+|数据库层不阻止导入两个 admin
+
+|内置角色保护在应用层
+|直接写库可绕过
+
+|无角色层级/约束表
+|RBAC1/2 未实现；扩展点见 §11
+
+|视图实时计算
+|数据量大时可能变慢；未物化
+
+|无全文索引
+|姓名搜索使用 LIKE；数据量小可接受
+
+|无分区/分表
+|当前数据量小，不需要
+
+|无列级加密
+|依赖云盘与访问控制；未做字段加密
+
+|无读写分离
+|单 MySQL 实例；高并发场景需扩展
+
+|全量导入/性能待执行
+|不能声称已完成全量验收
+|===
+
+== 附录 A：完整数据字典
+
+逐字段的类型、可空、默认值、键约束、来源、说明与删除策略见：
+
+* `docs/database/data-dictionary.adoc`
+* `docs/database/data-dictionary.md`
+
+== 附录 B：迁移与回滚
+
+* 正向：`database/migrations/V001__create_core_tables.sql`
+* 回滚：`database/rollback/U001__create_core_tables.sql`
+* 导入：`database/seeds/import_excel.py`
+* 核对：`database/seeds/verify_import.sql`
+
+== 附录 C：与代码、接口的对应
+
+[cols="2,3,3",options="header"]
+|===
+|数据库对象 |后端 |接口
+
+|`sys_user`
+|`UserPO`、`UserMapper`
+|`/users/**`、`/me`
+
+|`sys_role`
+|`RolePO`、`RoleMapper`
+|`/roles/**`
+
+|`sys_role_permission`
+|`RolePermissionPO`、`RoleMapper`
+|`/roles/{id}/permissions`
+
+|`sys_dept`
+|`DepartmentPO`、`DepartmentMapper`
+|`/departments/**`
+
+|`sys_user_role`
+|`UserMapper`
+|`/users/{id}/roles`
+
+|`v_user_permission`
+|`AuthorizationService`、`RoleMapper`
+|`/me/permissions` 与所有受保护接口
+|===

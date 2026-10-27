@@ -1,0 +1,43 @@
+# 状态图
+
+一期 RBAC0 的两个状态机。对应需求 LOGIN-05、USER-04/05/07、ROLE-02/03。
+
+---
+
+## 1. 用户账号状态
+
+```mermaid
+stateDiagram-v2
+  state "待首次改密" as PendingPassword
+  state "启用" as Enabled
+  state "停用" as Disabled
+
+  [*] --> PendingPassword : 导入 / 创建 / 重置密码
+  PendingPassword --> Enabled : 修改密码成功
+  Enabled --> PendingPassword : 重置密码
+  Enabled --> Disabled : 停用账号
+  Disabled --> Enabled : 启用账号
+  Enabled --> [*] : 删除
+  Disabled --> [*] : 删除
+  PendingPassword --> [*] : 删除
+```
+
+> 待改密状态只允许查看本人、改密、退出；停用后旧会话下一次请求即 401。
+
+---
+
+## 2. 角色状态
+
+```mermaid
+stateDiagram-v2
+  state "启用" as RoleEnabled
+  state "停用" as RoleDisabled
+
+  [*] --> RoleEnabled : 新建 / 导入
+  RoleEnabled --> RoleDisabled : 停用
+  RoleDisabled --> RoleEnabled : 启用
+  RoleEnabled --> [*] : 删除
+  RoleDisabled --> [*] : 删除
+```
+
+> 停用角色不贡献权限，下一次请求即失效；内置角色不可删除，`ADMIN` 不可停用。
