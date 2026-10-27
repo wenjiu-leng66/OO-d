@@ -1,5 +1,7 @@
 # 市政公司统一权限管理系统 · RBAC Permission System
 
+全体小组成员均可编辑所有目录、直接推送`main`或自行合并PR；任务分支和PR可选，不设指定负责人审批。详见[协作规范](CONTRIBUTING.md)。
+
 “有请下一组”六人小组的 OOAD 项目。系统统一管理员工、组织、角色、资源目录和授权，并用员工台账验证权限的数据范围。
 
 本仓库用于组内开发、代码阅读和检查排练；[Gitee 交付仓库](https://gitee.com/wenjiuleng66/rbac-permission-system)面向正式检查，收录交付所需材料。两边按用途独立维护，不能将 GitHub 的内部资料直接镜像覆盖到 Gitee。

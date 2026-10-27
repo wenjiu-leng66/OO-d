@@ -5,8 +5,8 @@ body:
   - type: input
     id: owner
     attributes:
-      label: 主责成员与合并负责人
-      placeholder: 主责成员 2；合并负责人为有写权限的指定成员，可由作者本人负责（Assignees 选择真实账号）
+      label: 主责成员或技术联系人
+      placeholder: 填写参与成员；技术分工不限制任何成员编辑或合并，Assignees 选择真实账号
     validations:
       required: true
   - type: dropdown

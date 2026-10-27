@@ -262,7 +262,7 @@ sequenceDiagram
 
 ## 12. GitHub 交付流程：取消评审等待
 
-本次在 `feat/member3-rbac0` 分支准备交付，对应 [成员 3 任务 Issue #4](https://github.com/wenjiu-leng66/RBAC-Permission-System/issues/4)。按你的要求，取消强制人工评审及等待步骤。PR 用于保留变更和检查记录，作者完成必要验证后，由负责人直接合并，不需要等待其他成员点击 Approve。
+本次在 `feat/member3-rbac0` 分支准备交付，对应 [成员 3 任务 Issue #4](https://github.com/wenjiu-leng66/RBAC-Permission-System/issues/4)。按你的要求，取消强制人工评审及等待步骤。PR 用于保留变更和检查记录，作者完成相应验证后，任意有写权限的成员均可直接合并，无需等待其他成员Approve；也允许直接更新main。
 
 协作手册、贡献流程和任务模板已同步调整为“认领任务 → 建分支 → 完成修改 → 自检与必要自动检查 → 合并 → 同步 main”。取消评审环节不会取消 RBAC0 阶段、测试或后续真实联调。涉及接口、数据和公共组件的约定仍需与对应负责人统一，避免两个模块无法连接。
 
