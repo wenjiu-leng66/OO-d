@@ -63,7 +63,7 @@
 | 事务和乐观锁 | 用户角色/角色授权整组替换、compare-and-increment | 409并发、失败后集合和版本均不变 |
 | 有效权限集中计算 | `AuthorizationService` | 多角色范围合并与即时生效测试 |
 | 数据迁移与可恢复 | V001、U001、MySQL持久卷 | 迁移/回滚/重建、重启后数据留存 |
-| 性能 | 正式全量MySQL | 鉴权≤10ms、常用列表/保存≤1s，实测前待执行 |
+| 性能 | 正式全量MySQL | 鉴权≤10ms、常用列表/保存≤1s：数据库端已在全量核对库实测通过（[证据](verification-record.md#全量数据库性能证据)）；全量HTTP端到端待执行 |
 | 公开仓库安全 | gitignore、仓库检查、差异审查 | 不含原Excel/真实员工/哈希/密钥 |
 | 服务器可以运行 | `deploy/compose.yaml`、[服务器步骤](../../deploy/README.md) | 上传版本、compose健康、外网HTTP、重启持久化，缺一不可 |
 | 完整界面原型 | [页面清单](../design/stage1-ui-prototype.md) | 按不同身份演示，不以模拟数据代替后端证据 |
