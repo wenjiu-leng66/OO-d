@@ -8,6 +8,9 @@ import jakarta.servlet.http.HttpSession;
 import java.util.*;
 import org.springframework.stereotype.Service;
 
+/**
+ * 按当前有效 read 权限组装门户菜单和动作元数据；此处返回按钮可用性不能代替业务接口鉴权。
+ */
 @Service
 public class PortalService {
   private final CatalogMapper catalog;
@@ -18,6 +21,10 @@ public class PortalService {
     this.authorization = authorization;
   }
 
+  /**
+   * 只有可查看的功能点才创建其所属系统/模块，避免返回空菜单或泄露无权功能入口。
+   * LinkedHashMap 保留目录顺序，同一模块只追加一次。
+   */
   public List<Map<String, Object>> menu(HttpSession session) {
     var u = authorization.ready(session);
     var p = authorization.effectivePermissions(u.id());
@@ -68,6 +75,10 @@ public class PortalService {
     return (List<Map<String, Object>>) item.get(field);
   }
 
+  /**
+   * 直接访问功能详情也重新检查 read；未知功能与无权功能统一拒绝。
+   * 六动作分别返回 enabled 与 scope；一期只有 f046 员工台账有本服务对应的真实业务写接口，其余标记 placeholder。
+   */
   public Map<String, Object> function(HttpSession session, String code) {
     authorization.ready(session);
     var f = catalog.function(code).orElseThrow(() -> ApiException.forbidden("未知功能点或没有查看权限。"));

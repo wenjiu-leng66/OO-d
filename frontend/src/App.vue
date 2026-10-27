@@ -14,6 +14,7 @@ const noticeElement = ref()
 const noticeHeight = ref(72)
 const iconOpacity = ref(0)
 let noticeObserver
+// 与 CSS 的 720/800px 断点配合：窄屏渐显图标栏，宽屏恢复时清掉抽屉展开状态。
 function updateNavigationSize() {
   iconOpacity.value = Math.max(0, Math.min(1, (800 - window.innerWidth) / 80))
   if (window.innerWidth > 800) mobileNavOpen.value = false
@@ -25,6 +26,7 @@ const compactNav = computed(() => [
   ...(adminNav.value.length ? [{ label: '管理后台', group: 'admin', icon: 'M12 3 3 7v5c0 5 9 9 9 9s9-4 9-9V7ZM8 12l3 3 5-6' }] : []),
   ...(laterNav.value.length ? [{ label: '后续阶段（静态原型）', group: 'later', icon: 'M4 5h16v16H4ZM8 3v4M16 3v4M4 10h16M8 14h3M8 17h7' }] : [])
 ])
+// 切组后等 Vue 完成渲染再计算标题位置，保证移动导航滚动定位到正确分组。
 async function selectCompact(item) {
   if (item.path) { mobileNavOpen.value = false; router.push(item.path); return }
   if (item.group && mobileNavOpen.value && openGroup.value === item.group) { mobileNavOpen.value = false; openGroup.value = null; return }
@@ -49,9 +51,11 @@ onMounted(() => {
   window.addEventListener('keydown', closeOnEscape)
   window.addEventListener('resize', updateNavigationSize)
   updateNavigationSize()
+  // 顶部提示条会随换行改变高度；测量后写入 CSS 变量，防止固定导航覆盖提示或正文。
   noticeObserver = new ResizeObserver(() => { noticeHeight.value = noticeElement.value.getBoundingClientRect().height })
   noticeObserver.observe(noticeElement.value)
 })
+// 对称释放全局监听和观察器，避免热更新/重新挂载产生重复事件或保留旧 DOM。
 onUnmounted(() => {
   window.removeEventListener('keydown', closeOnEscape)
   window.removeEventListener('resize', updateNavigationSize)
@@ -59,6 +63,7 @@ onUnmounted(() => {
 })
 const bare = computed(() => route.path === '/login' || !auth.isAuthenticated)
 const forcedPassword = computed(() => auth.mustChangePassword)
+// 菜单直接依赖当前 auth 授权，刷新会话/切换身份后统一重算，无额外“管理员全开放”分支。
 const menu = computed(() => portalMenu(auth))
 const adminNav = computed(() => visibleAdminItems(auth))
 const laterNav = computed(() => visibleLaterStageItems(auth))
@@ -71,6 +76,7 @@ async function signOut() {
   await ElMessageBox.confirm('确定退出当前账号吗？', '退出登录', { type: 'warning' })
   logout(); ElMessage.success('已退出登录'); router.push('/login')
 }
+// 仅切换前端 mock 身份；Swagger/真实后端的 Cookie 会话独立，不随这个控件切换。
 async function onIdentity(username) {
   try {
     await switchIdentity(username)

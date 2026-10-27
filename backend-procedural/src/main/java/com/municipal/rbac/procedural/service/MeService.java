@@ -8,6 +8,9 @@ import jakarta.servlet.http.HttpSession;
 import java.util.*;
 import org.springframework.stereotype.Service;
 
+/**
+ * 本人信息和权限追溯的响应组装。显式选取公开字段，绝不直接序列化含密码摘要的 UserPO。
+ */
 @Service
 public class MeService {
   private final UserMapper users;
@@ -26,6 +29,9 @@ public class MeService {
     this.authorization = authorization;
   }
 
+  /**
+   * 角色 ID 表示完整分配关系，包含停用角色；是否实际生效应看 permissions，而非仅看 roleIds。
+   */
   public Map<String, Object> userView(UserPO user) {
     return map(
         "id",
@@ -54,10 +60,17 @@ public class MeService {
         users.roleIds(user.id(), false));
   }
 
+  /**
+   * 本人信息允许强制改密状态读取，因此使用 current 而非 ready。
+   */
   public Map<String, Object> me(HttpSession session) {
     return userView(authorization.current(session));
   }
 
+  /**
+   * 展示每个有效权限的最大 scope 及启用来源角色，便于核对“为什么有权限”。
+   * 派生管理码回溯到原始清单授权；同角色经多条映射得到同码时避免重复列出来源。
+   */
   public Map<String, Object> permissions(HttpSession session) {
     var user = authorization.ready(session);
     var p = authorization.effectivePermissions(user.id());

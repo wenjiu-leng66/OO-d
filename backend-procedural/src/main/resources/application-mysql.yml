@@ -1,3 +1,4 @@
+# 正式运行 profile。迁移由部署/受控数据流程执行；应用启动不自动重建或清空既有 MySQL 表。
 spring:
   datasource:
     url: ${DB_URL:jdbc:mysql://localhost:3306/rbac?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai}

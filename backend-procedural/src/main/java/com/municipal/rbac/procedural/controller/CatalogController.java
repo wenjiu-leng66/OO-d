@@ -5,6 +5,9 @@ import jakarta.servlet.http.HttpSession;
 import java.util.Map;
 import org.springframework.web.bind.annotation.*;
 
+/**
+ * 只读权限目录 HTTP 适配层；分页与目录查看权在 CatalogService 统一检查。
+ */
 @RestController
 @RequestMapping("/api/v1")
 public class CatalogController {

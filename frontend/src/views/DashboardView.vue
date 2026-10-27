@@ -29,6 +29,7 @@ const shortcuts = [
   { title: '角色授权', description: '勾选功能点操作并选择数据范围', symbol: '权', permissions: ['rbac:role:read', 'rbac:permission:read'], path: '/admin/grants' },
   { title: '查看组织架构', description: '浏览部门树和部门人员', symbol: '部', permissions: ['rbac:department:read'], path: '/admin/departments' }
 ]
+// 复合快捷入口要求所有前置权限；例如会新增但不能查看用户时，不展示用户管理入口。
 const visibleShortcuts = computed(() => shortcuts.filter(item => item.permissions.every(code => hasPermission(auth, code))))
 onMounted(load)
 </script>

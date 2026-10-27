@@ -6,6 +6,9 @@ import java.util.*;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+/**
+ * 权威权限目录的只读 JDBC 查询。系统/模块/功能按显式 sort_no 与 ID 稳定排序，不以名称生成编号。
+ */
 @Repository
 public class CatalogMapper {
   private final JdbcTemplate jdbc;
@@ -14,6 +17,9 @@ public class CatalogMapper {
     this.jdbc = jdbc;
   }
 
+  /**
+   * 关联三层目录同时输出稳定标识和展示名，避免 Service 用名称反向推断系统或模块归属。
+   */
   public List<Map<String, Object>> functions() {
     return jdbc.query(
         "SELECT f.id,f.code,f.name,f.description,m.id mid,m.name mname,s.code scode,s.name sname"
@@ -65,6 +71,9 @@ public class CatalogMapper {
         count("sys_permission"));
   }
 
+  /**
+   * table 仅由本类 stats 的固定表名字面量传入；标识符无法使用值参数绑定，不能接收 HTTP 输入。
+   */
   private long count(String table) {
     return jdbc.queryForObject("SELECT COUNT(*) FROM " + table, Long.class);
   }

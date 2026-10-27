@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus'
 import LaterStageBanner from '../components/LaterStageBanner.vue'
 
 defineProps({ embedded: { type: Boolean, default: false } })
+// 下列约束不参与一期 assignRoles/computeGrants 计算；展示记录不代表数据库已执行 SSD/DSD。
 const constraints = [
   { type: '静态互斥（SSD）', roles: '付款经办 ↔ 付款复核', param: '不能分给同一个人', enabled: true },
   { type: '动态互斥（DSD）', roles: '申请提交 ↔ 申请审批', param: '不能在同一会话同时激活', enabled: true },

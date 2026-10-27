@@ -1,5 +1,6 @@
 <script setup>
-// 员工台账管理（PORTAL-04 ~ 06、UC-08）：唯一的真实业务，用来演示数据范围不能被绕过。
+// 员工台账原型（PORTAL-04 ~ 06、UC-08）：业务交互完整，但此 Vue 页调用的是内存 mock。
+// 真后端的同名接口独立检查范围，必须用 HTTP 自测验证，不能用本页成功代替。
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api/mock'
@@ -23,6 +24,7 @@ const placeholderActions = [
 ].map(item => ({ ...item, code: `hr:f046:${item.action}` }))
 const actionScopes = computed(() => placeholderActions.map(item => ({ ...item, scope: permissionScope(auth, item.code) })))
 
+// 响应同时给出查看/编辑范围及逐行 editable；可见行不等于当前身份可编辑该行。
 async function load() {
   loading.value = true; failed.value = false
   try { result.value = await api.listEmployees({ keyword: keyword.value, page: page.value, pageSize: size }) }
@@ -30,6 +32,7 @@ async function load() {
 }
 function search() { page.value = 1; load() }
 function openEdit(row) { editing.value = row; Object.assign(form, { phone: row.phone, email: row.email }) }
+// 只构造电话/邮箱白名单请求；页面验证服务于交互，API 仍需拒绝篡改 ID 和额外字段。
 async function save() {
   if (!await formRef.value.validate().catch(() => false)) return
   saving.value = true
@@ -40,6 +43,7 @@ function placeholder(item) { ElMessage.info(`占位：${item.label}员工。后�
 
 // 越权演示：绕过界面直接提交修改请求，改用任意员工编号或附带不允许修改的字段。
 const probe = reactive({ id: 'u0029', field: 'phone', response: null })
+// 故意绕过按钮禁用状态，验证模拟接口本身拒绝请求；仍不构成真实后端的越权测试证据。
 async function sendProbe() {
   const payload = probe.field === 'phone' ? { phone: '13800009999' } : { name: '被篡改的姓名' }
   try { probe.response = { ok: true, body: await api.updateEmployeeContact(probe.id.trim(), payload) }; await load() }

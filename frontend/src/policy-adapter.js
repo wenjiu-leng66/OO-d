@@ -4,6 +4,7 @@ import './authorization/rbac0-policy.js'
 export const policy = globalThis.Rbac0
 if (!policy) throw new Error('RBAC0 权限策略未加载')
 
+// 将 Vue 状态投影为纯策略输入；不在适配层新增权限或从角色名称推断超级权限。
 export function policySession(auth) {
   return {
     authenticated: auth.isAuthenticated,
@@ -24,6 +25,8 @@ function requiredPermissions(to) {
   return to.meta.permission ? [to.meta.permission] : undefined
 }
 
+// sessionOnly 是显式例外；普通缺少权限元数据的路由仍交给纯策略默认拒绝。
+// 动态功能编号不存在时返回 null，由页面渲染 404，避免“未知功能”与 403 循环跳转。
 export function routeAccess(auth, to) {
   const session = policySession(auth)
   const required = requiredPermissions(to)

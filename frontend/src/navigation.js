@@ -2,12 +2,14 @@
 import { functions, systems, adminMapping } from './api/fixtures/catalog.js'
 import { visibleNavigation } from './policy-adapter.js'
 
-// 功能点的入口：员工台账为真实业务页；系统管理后台已实现的模块进入管理页面；其余为占位页。
+// 功能点入口：台账有完整原型交互（数据仍来自 mock）；管理功能进入对应页面，其余仅展示操作占位。
 export function functionPath(fn) {
   if (fn.id === 'f046') return '/ledger'
   return adminMapping[fn.id]?.page || `/portal/f/${fn.id}`
 }
 
+// 先按 read 权限筛选叶子，再生成非空系统/模块，避免菜单泄露无权访问的空分组。
+// 导航可见不代替路由守卫和 API 校验；只有 create/edit 而没有 read 时也不产生入口。
 export function portalMenu(auth) {
   const readable = new Set(auth.permissionsLoaded ? auth.permissions : [])
   const tree = []

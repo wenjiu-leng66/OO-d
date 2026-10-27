@@ -5,6 +5,9 @@ import jakarta.servlet.http.HttpSession;
 import java.util.*;
 import org.springframework.web.bind.annotation.*;
 
+/**
+ * 组织树及含下级成员查询入口，范围和员工粒度裁剪由 DepartmentService 负责。
+ */
 @RestController
 @RequestMapping("/api/v1/departments")
 public class DepartmentController {

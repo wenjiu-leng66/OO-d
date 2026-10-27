@@ -18,6 +18,8 @@ export class ApiError extends Error {
 }
 const fail = (status, code, message, details) => { throw new ApiError(status, code, message, details) }
 
+// 向页面返回脱离内存库的 JSON 快照；组件不能通过修改响应对象绕过保存接口。
+// 这里只处理 JSON 结构，不承诺保留 Date、Map、undefined 等非 JSON 类型。
 const copy = value => JSON.parse(JSON.stringify(value))
 const inBrowser = typeof window !== 'undefined'
 
@@ -53,6 +55,8 @@ const roleById = id => db.roles.find(item => item.id === id)
 const SUPER_ADMIN = 'R01'
 
 // 目标部门是否为基准部门本身或其下级（DEPT 范围）。
+// 从目标向父级回溯，而非只比较直接父级，因此 DEPT 包含所有层级的下级。
+// 合成部门树由固定数据保证无环；正式导入必须先验证组织树合法性。
 export function isWithinDepartment(targetId, baseId) {
   for (let node = departmentById(targetId); node; node = departmentById(node.parentId)) {
     if (node.id === baseId) return true
@@ -65,6 +69,7 @@ function departmentPath(id) {
   return names.join(' / ')
 }
 
+// 明确挑选对外字段，口令表永不进入列表/详情响应；显示用角色列表不等于有效授权。
 function publicUser(user) {
   const roles = user.roleIds.map(roleById).filter(Boolean)
   return {
@@ -77,6 +82,8 @@ function publicUser(user) {
 }
 
 // 有效权限 = 启用角色授权的并集，同码取最大范围；系统管理后台功能点再映射为 rbac:*（CAT-03）。
+// 映射只允许从目录中已有 sys:* 授权派生，不能因为有某个管理角色名称就放开所有 rbac:*。
+// via 记录派生链，sources 记录角色与原范围，便于“我的权限”追溯实际来源。
 export function computeGrants(user) {
   const base = policy.effectiveGrants(user, db.roles)
   const derived = new Map()
@@ -101,6 +108,8 @@ function scopesOf(grants) {
 }
 
 // ---------- 认证与鉴权：认证 → 权限码 → 数据范围 → 目标对象（AUTHZ-01） ----------
+// 每个接口调用读取当前账号状态；停用/删除身份即失效。
+// 首次改密仅对本人信息和改密显式放行，不能因为成功登录就进入业务。
 function sessionUser({ allowPasswordChange = false } = {}) {
   const user = userById(sessionUserId)
   if (!user || user.status !== 'ENABLED') {
@@ -118,6 +127,7 @@ async function waitForWrite(ms = 250) {
   if (sessionUserId !== actor.id) fail(401, 'UNAUTHENTICATED', '演示身份已改变，本次保存已取消')
 }
 
+// 每次重新计算启用角色的当前授权，不缓存上次登录的结果（GRANT-05）。
 function authorize(code) {
   const user = sessionUser()
   const grant = computeGrants(user).find(item => item.code === code)
@@ -132,10 +142,12 @@ function covers(scope, actor, target) {
     isWithinDepartment)
 }
 
+// 部门本身没有个人 ownerId，因此 SELF 不得用于新建他人账号或跨部门迁移。
 function departmentAllowed(scope, actor, departmentId) {
   return covers(scope, actor, { id: null, departmentId })
 }
 
+// rows 必须已经完成范围和业务筛选，再分页并统计 total，防止通过数量泄露范围外人员。
 function paginate(rows, page = 1, pageSize = 10) {
   const safeSize = Math.min(Math.max(Number(pageSize) || 10, 1), 100)
   const safePage = Math.max(Number(page) || 1, 1)
@@ -158,6 +170,7 @@ function checkRoleInfo(name, description) {
   if (String(description).length > 255) fail(400, 'VALIDATION', '角色说明不能超过 255 位')
 }
 
+// 原型中 R01 对应唯一超级管理员；自操作和管理员保护均由接口再次检查，按钮禁用只是提示。
 function protectAccount(actor, target, action) {
   if (target.id === actor.id) fail(409, 'PROTECTED_ACCOUNT', `不能${action}自己的账号`)
   if (target.roleIds.includes(SUPER_ADMIN)) fail(409, 'PROTECTED_ACCOUNT', `唯一的超级管理员账号不能被${action}`)
@@ -218,7 +231,8 @@ export const api = {
     return this.me()
   },
 
-  // 员工台账：真实业务（PORTAL-04 ~ 06、UC-08）
+  // 员工台账原型交互（PORTAL-04 ~ 06、UC-08）；此处仍为内存数据，真后端另有独立实现。
+  // 查看范围与编辑范围分别计算：能看到的行不一定能修改。
   async listEmployees({ keyword = '', page = 1, pageSize = 10 } = {}) {
     const { user: actor, scope } = authorize('hr:f046:read')
     const editGrant = computeGrants(actor).find(item => item.code === 'hr:f046:edit')
@@ -233,6 +247,8 @@ export const api = {
       }))
     return listResponse({ ...paginate(rows, page, pageSize), readScope: scope, editScope: editGrant?.scope || null })
   },
+  // 字段白名单阻止借联系方式接口修改姓名/角色；缺失字段保留，空串允许清空联系方式。
+  // 本原型的 await 仅模拟延时，不等同于真后端事务/并发隔离；安全验收须直接调用 Java API。
   async updateEmployeeContact(id, payload) {
     const allowed = ['phone', 'email']
     const extra = Object.keys(payload || {}).filter(key => !allowed.includes(key))
@@ -247,6 +263,7 @@ export const api = {
   },
 
   // 管理概览（成员 2 的工作台）
+  // 人员统计与列表使用同一可见范围，避免只隐藏列表却暴露公司级人数。
   async getOverview() {
     const { user: actor, scope } = authorize('rbac:user:read')
     const visible = db.users.filter(user => covers(scope, actor, user))
@@ -275,6 +292,7 @@ export const api = {
     const { target } = userInScope('rbac:user:read', id)
     return wait({ ...publicUser(target), permissionCount: computeGrants(target).length })
   },
+  // 新增只建账号且强制首次改密，初始角色为空；授角色必须走独立授权接口。
   async createUser(payload) {
     const { user: actor, scope } = authorize('rbac:user:create')
     const username = String(payload.username || '').trim()
@@ -294,6 +312,7 @@ export const api = {
     passwords.set(user.id, DEMO_PASSWORD)
     return publicUser(user)
   },
+  // 既检查原目标，也检查迁入部门；只校验旧部门会允许把人员移出管理边界。
   async updateUser(id, payload) {
     const { actor, target, scope } = userInScope('rbac:user:update', id)
     if (!String(payload.name || '').trim()) fail(400, 'VALIDATION', '请输入姓名')
@@ -339,10 +358,12 @@ export const api = {
     if (new Set(roleIds).size !== roleIds.length) fail(400, 'VALIDATION', '角色集合中有重复项')
     const next = [...roleIds]
     if (next.includes(SUPER_ADMIN)) fail(403, 'FORBIDDEN', '超级管理员角色不能授给其他账号')
+    // 按差集判断管理角色是否改变；已有管理角色保持不变不构成本次越权新增/撤销。
     const changed = [...next.filter(roleId => !target.roleIds.includes(roleId)), ...target.roleIds.filter(roleId => !next.includes(roleId))]
     const actorIsSuper = actor.roleIds.includes(SUPER_ADMIN) && roleById(SUPER_ADMIN).enabled
     const adminChange = changed.map(roleById).find(role => role.kind === 'admin')
     if (!actorIsSuper && adminChange) fail(403, 'FORBIDDEN', `部门管理员只能分配或撤销业务角色，不能变更“${adminChange.name}”`)
+    // 校验完成后同步比较版本并整组替换，中间没有 await，旧版本不能覆盖另一管理员的新结果。
     if (version !== target.roleVersion) fail(409, 'VERSION_CONFLICT', '该用户的角色已被其他管理员修改，请刷新后重试', { currentVersion: target.roleVersion })
     target.roleIds = next
     target.roleVersion += 1
@@ -350,6 +371,8 @@ export const api = {
   },
 
   // 组织架构（DEPT-01 ~ 02，只读）
+  // 从可见根构建子树，直接人数与含下级人数分开统计。
+  // 当前 mock 的 SELF 返回空树；SELF 部门成员等精细语义以真实后端验收为准。
   async listDepartments() {
     const { user: actor, scope } = authorize('rbac:department:read')
     const count = id => db.users.filter(user => user.departmentId === id).length
@@ -417,6 +440,8 @@ export const api = {
     role.enabled = Boolean(enabled)
     return copy(role)
   },
+  // 内置角色拒绝删除；自建角色有持有者时先返回 ROLE_HAS_USERS，二次确认后才清关系。
+  // 同步递增受影响用户的 roleVersion，使已打开的旧角色分配草稿在保存时冲突。
   async deleteRole(id, { confirmed = false } = {}) {
     await waitForWrite()
     authorize('rbac:role:delete')
@@ -428,6 +453,7 @@ export const api = {
     db.roles.splice(db.roles.indexOf(role), 1)
     return { id }
   },
+  // 原型只展示角色关系；这里未做部门范围裁剪，不能用于证明真后端的成员数据隔离。
   async listRoleUsers(id) {
     authorize('rbac:role:read')
     if (!roleById(id)) fail(404, 'NOT_FOUND', '角色不存在')
@@ -449,17 +475,21 @@ export const api = {
     const role = roleById(id) || fail(404, 'NOT_FOUND', '角色不存在')
     if (role.id === SUPER_ADMIN) fail(409, 'PROTECTED_ROLE', '超级管理员角色的授权不能修改')
     const known = new Set(catalogPermissions.map(item => item.code))
+    // 在临时 Map 中验证，全部通过才替换 role.grants。该 mock 对重复码采用后值覆盖，
+    // 不代表真 API 接受重复授权；检查重复码/数据库回滚仍须执行后端测试。
     const byCode = new Map()
     for (const grant of grants || []) {
       if (!known.has(grant.code)) fail(400, 'UNKNOWN_PERMISSION', `未知的权限码：${grant.code}`)
       if (!['ALL', 'DEPT', 'SELF'].includes(grant.scope)) fail(400, 'VALIDATION', `数据范围无效：${grant.code}`)
       byCode.set(grant.code, grant.scope)
     }
+    // read 是同一功能点的操作依赖；不是“拥有任意 read 即可”，也不把范围自动扩大。
     for (const code of byCode.keys()) {
       const { systemCode, resource } = parsePermissionCode(code)
       if (!byCode.has(`${systemCode}:${resource}:read`)) fail(400, 'READ_REQUIRED', `${code} 缺少同一功能点的“查看”权限`)
     }
     if (version !== role.permissionVersion) fail(409, 'VERSION_CONFLICT', '该角色的授权已被其他管理员修改，请刷新后重试', { currentVersion: role.permissionVersion })
+    // 失败注入放在正式赋值前，仅证明原型失败时内存不变；真实事务回滚由 Java/MySQL 检查证明。
     if (simulateFailure) fail(500, 'SAVE_FAILED', '模拟保存中途失败：事务已回滚，授权与保存前完全相同')
     role.grants = [...byCode].map(([code, scope]) => ({ code, scope })).sort((a, b) => a.code.localeCompare(b.code))
     role.permissionVersion += 1

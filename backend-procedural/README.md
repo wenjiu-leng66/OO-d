@@ -25,7 +25,7 @@ mvn package -DskipTests
 java -jar target/rbac-procedural-backend-0.1.0-SNAPSHOT.jar
 ```
 
-`mvn test` 使用独立的内存 H2 和合成口令，不读取本地业务库；29 项集成测试已通过，覆盖范围见下文。应用默认使用 `h2` 配置，数据保存在当前目录的 `work/rbac-local.mv.db`，重启保留数据。演示初始化仅在空库执行，重复启动不会覆盖用户或密码。修改 `RBAC_INITIAL_PASSWORD` 不会重设已有用户密码。
+`mvn test` 使用独立的内存 H2 和合成口令，不读取本地业务库；当前测试含53项隔离单元和29项整合，共82项通过；覆盖范围见下文。应用默认使用 `h2` 配置，数据保存在当前目录的 `work/rbac-local.mv.db`，重启保留数据。演示初始化仅在空库执行，重复启动不会覆盖用户或密码。修改 `RBAC_INITIAL_PASSWORD` 不会重设已有用户密码。
 
 打开 `http://localhost:8080/swagger-ui/index.html`，登录接口为 `POST /api/v1/auth/login`。所有演示账号初始密码均为启动时注入的值：
 
@@ -93,3 +93,9 @@ python ../scripts/smoke_http.py --base-url http://localhost:8080
 ```
 
 `Stage1ApiTest` 共 29 项集成测试，覆盖登录失败同提示、手机号登录和会话轮换、首次改密、停用 / 重置旧会话、本人 / 部门 / 下级数据范围、后台越权、用户唯一性及删除负责人清空、账号保护、部门管理员授出限制、同码最大范围、即时撤权、角色 CRUD 与停用、授权合法性、全目录数量、PBKDF2 导入口令、事务写后故障回滚，以及双线程版本 CAS 恰有一个成功、并发角色分配与未确认删除串行、128 字符及 Unicode 口令完整性。JaCoCo 报告输出 `target/site/jacoco/index.html`，不沿用旧版覆盖率数字。MySQL、原始资料导入和服务器重启的验收请按项目级自测说明继续完成。
+
+## 分层单元测试和覆盖率
+
+新增9类隔离测试：`AuthControllerTest`、`HealthControllerTest`、`AuthorizationServiceTest`、`AuthServiceTest`、`UserServiceTest`、`RoleServiceTest`、`DepartmentMapperTest`、`IdsTest`、`DataInitializerTest`。它们分别验证控制器协作、业务保护/范围/冲突分支、组织遍历/ID边界和合成初始化条件；mock不验证实际SQL、行锁或事务。
+
+在仓库根目录运行 `mvn -f backend-procedural/pom.xml clean verify`，一并执行53项单元与29项整合测试。打开 `backend-procedural/target/site/jacoco/index.html` 查看实际覆盖率；2026-10-27的行89.98%、分支74.06%及未覆盖部分见[测试报告](../docs/testing/test-report-2026-10-27.md)。助教现场须重新运行，不只展示旧报告。

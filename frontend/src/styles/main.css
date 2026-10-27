@@ -32,6 +32,7 @@ body { margin: 0; min-width: 320px; }
   .app-shell > .sidebar { flex-shrink: 0; width: 248px; margin-right: calc(var(--nav-reveal) - 248px); clip-path: inset(0 calc(248px - var(--nav-reveal)) 0 0); }
   .app-shell > .el-container { position: relative; z-index: 1; min-width: 0; background: #f5f7fb; }
 }
+/* 过渡宽度内保留图标栏与可展开侧栏；覆盖层、侧栏、图标栏按 1000/1001/1002 分层。 */
 @media (720px < width <= 800px) {
   .compact-sidebar { display: flex; position: fixed; top: var(--notice-height, 72px); bottom: 0; left: 0; z-index: 2; width: 68px; flex-direction: column; align-items: center; gap: 10px; padding: 18px 8px; color: white; background: #17243b; opacity: var(--icon-opacity, 0); }
   .compact-sidebar .brand-mark { flex: 0 0 34px; margin-bottom: 12px; }
@@ -42,6 +43,7 @@ body { margin: 0; min-width: 320px; }
   .compact-sidebar { z-index: 1002; }
   .sidebar-backdrop { display: block; position: fixed; z-index: 1000; top: var(--notice-height, 72px); right: 0; bottom: 0; left: 0; width: auto; height: auto; border: 0; background: rgba(10, 18, 32, .48); }
 }
+/* 手机宽度使用抽屉导航；关闭时同时移出、隐藏并禁止指针，避免遮挡或误点不可见菜单。 */
 @media (max-width: 720px) {
   .app-shell > .el-container { margin-left: 68px; }
   .compact-sidebar { display: flex; position: fixed; z-index: 1002; top: var(--notice-height, 72px); right: auto; bottom: 0; left: 0; width: 68px; height: auto; flex-direction: column; align-items: center; gap: 10px; padding: 18px 8px; color: #fff; background: linear-gradient(180deg, #17243b 0%, #101a2d 100%); box-shadow: 5px 0 18px rgba(25, 40, 70, .1); }

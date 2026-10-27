@@ -18,11 +18,13 @@ const can = code => hasPermission(auth, code)
 const userScope = computed(() => permissionScope(auth, 'rbac:user:read'))
 const actorIsSuper = computed(() => auth.roles.some(role => role.id === 'R01' && role.enabled))
 
+// 筛选参数由 API 统一计算范围、数量和分页，页面不从全量人员中自行裁剪越权数据。
 async function load() {
   loading.value = true; failed.value = false
   try { result.value = await api.listUsers({ ...filters, page: page.value, pageSize: size }) }
   catch { failed.value = true } finally { loading.value = false }
 }
+// 过滤条件改变时回到第一页，避免原先的高页码把有结果的查询显示为空。
 function search() { page.value = 1; load() }
 function reset() { Object.assign(filters, { departmentId: '', keyword: '', roleId: '', status: '' }); search() }
 
@@ -37,6 +39,7 @@ const rules = {
   phone: [{ pattern: /^(1\d{10})?$/, message: '手机号须为 11 位数字，可以为空', trigger: 'blur' }],
   email: [{ type: 'email', message: '邮箱格式不正确', trigger: 'blur' }]
 }
+// 新增与编辑按不同权限请求可选部门；查看范围不能直接复用为写入范围。
 async function openForm(user = null) {
   editingId.value = user?.id || null
   Object.assign(form, user ? { username: user.username, name: user.name, departmentId: user.departmentId, position: user.position, phone: user.phone, email: user.email }
@@ -57,6 +60,7 @@ async function submitForm() {
 
 // ---------- 详情与账号操作 ----------
 const selected = ref(null); const detailVisible = ref(false)
+// 禁用按钮便于说明保护规则，不能替代 mock/真后端的相同保护检查。
 const isProtected = user => Boolean(user) && (user.id === auth.user?.id || user.roleIds.includes('R01'))
 const protectReason = user => user?.id === auth.user?.id ? '不能对自己的账号执行此操作' : '唯一的超级管理员账号受保护'
 async function showDetail(row) { selected.value = await api.getUser(row.id); detailVisible.value = true }
@@ -80,11 +84,13 @@ const removed = computed(() => (selected.value?.roleIds || []).filter(id => !rol
 const roleName = id => roles.value.find(role => role.id === id)?.name || id
 const roleLocked = role => role.id === 'R01' || (!actorIsSuper.value && role.kind === 'admin')
 const roleLockReason = role => role.id === 'R01' ? '超级管理员角色不能授给其他账号' : '部门管理员只能分配或撤销业务角色'
+// 对完整已分配集合建副本；未勾选项在整组替换时会被撤销，不能只传新增项。
 function openRoles() { roleDraft.value = [...selected.value.roleIds]; roleDialog.value = true }
 function simulateOtherAdmin() {
   api.demo.bumpUserRoleVersion(selected.value.id)
   ElMessage.warning('已模拟：另一位管理员刚保存了这个用户的角色，服务端版本号 +1。现在点保存会收到 409。')
 }
+// 连同读取时的 roleVersion 提交；冲突后丢弃旧草稿并读取最新集合，要求重新复核。
 async function saveRoles() {
   if (removed.value.length) {
     try { await ElMessageBox.confirm(`将撤销：${removed.value.map(roleName).join('、')}。确定保存？`, '撤销角色', { type: 'warning' }) } catch { return }
@@ -102,6 +108,7 @@ async function saveRoles() {
 }
 
 onMounted(async () => {
+  // 部门选项、可读角色和用户列表独立加载；没有角色查看权限仍允许使用用户列表。
   await Promise.allSettled([
     api.departmentOptions('rbac:user:read').then(value => { departments.value = value }),
     (can('rbac:role:read') ? api.listRoles() : Promise.resolve([])).then(value => { roles.value = value }),

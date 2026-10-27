@@ -5,6 +5,9 @@ import jakarta.servlet.http.HttpSession;
 import java.util.*;
 import org.springframework.web.bind.annotation.*;
 
+/**
+ * 门户元数据及一期员工台账入口。元数据的按钮 enabled 仅用于展示，写接口仍独立检查动作/范围。
+ */
 @RestController
 @RequestMapping("/api/v1")
 public class PortalController {

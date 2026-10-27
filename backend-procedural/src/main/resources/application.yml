@@ -1,3 +1,5 @@
+# 通用运行配置。默认 h2 只用于本地检查；服务器需显式启用 mysql profile。
+# HttpOnly/SameSite 管理会话 Cookie，HTTPS 部署时应设置 SESSION_COOKIE_SECURE=true。
 spring:
   application:
     name: rbac-procedural-backend

@@ -11,11 +11,13 @@ import NotFoundView from './NotFoundView.vue'
 
 const route = useRoute()
 const fn = computed(() => functionById.get(String(route.params.fid)))
+// 六个动作分别取各自 scope；有 read 并不代表有 edit/approve 等写操作。
 const rows = computed(() => fn.value ? actions.map(action => {
   const code = `${fn.value.systemCode}:${fn.value.id}:${action.code}`
   return { ...action, code, scope: permissionScope(auth, code) }
 }) : [])
 const sources = code => auth.grants.find(grant => grant.code === code)?.sources || []
+// 占位按钮只给出权限说明，不发请求、不修改业务数据，也不能计作业务功能已实现。
 function run(row) {
   ElMessage.info(`占位：${row.label}。正式系统由后端检查 ${row.code}，数据范围为“${scopeLabel(row.scope)}”。`)
 }

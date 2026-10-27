@@ -6,10 +6,12 @@
 -- 所以本文件放在 migrations/ 之外, 不会被扫描到; 需要时用 mysql 客户端手工执行。
 -- =============================================================
 
+-- 先删依赖视图，再清理关联表和实体；MySQL DDL 会隐式提交，不能用 ROLLBACK 恢复这些表。
 DROP VIEW IF EXISTS v_user_permission;
 
 -- sys_dept 与 sys_user 互相引用, 临时关闭外键检查再按依赖倒序删除
 SET FOREIGN_KEY_CHECKS = 0;
+-- 外键检查只对当前连接临时关闭，处理部门/用户的循环引用；不是数据备份或业务回退机制。
 DROP TABLE IF EXISTS sys_role_permission;
 DROP TABLE IF EXISTS sys_user_role;
 DROP TABLE IF EXISTS sys_permission;

@@ -27,20 +27,24 @@ export const functions = functionRows.map(([id, systemCode, module, name]) => ({
   description: `${systemByCode.get(systemCode).name} / ${module} / ${name}`
 }))
 export const functionById = new Map(functions.map(item => [item.id, item]))
+// 模块以“系统码/模块名”去重；不同系统的同名模块不能合并。
 export const modules = [...new Map(functions.map(item => [`${item.systemCode}/${item.module}`, { systemCode: item.systemCode, name: item.module }])).values()]
 
 export const permissionCode = (fn, action) => `${fn.systemCode}:${fn.id}:${action}`
+// 固定功能编号与六动作做笛卡尔积；这些是可授权目录，不是当前账号的有效权限集合。
 export const catalogPermissions = functions.flatMap(fn => actions.map(action => ({
   code: permissionCode(fn, action.code), functionId: fn.id, action: action.code,
   systemCode: fn.systemCode, systemName: fn.systemName, module: fn.module, name: fn.name
 })))
 
+// 只拆分已知格式；安全判断还须结合目录/动作白名单，不能把能 split 的字符串都当合法权限。
 export function parsePermissionCode(code) {
   const [systemCode, resource, action] = String(code).split(':')
   return { systemCode, resource, action }
 }
 
-// 系统管理后台中已实现的模块映射为 rbac:* 权限（CAT-03）。映射表是原型提案，接口设计阶段写入契约。
+// 系统管理后台已实现模块的 CAT-03 映射；约定见 api/openapi.yaml 与 docs/standards/api-contract.md。
+// 例如 sys:f339:edit 派生两个用户管理动作，原始 grant 的 scope 随派生码保留。
 export const adminMapping = {
   f339: { page: '/admin/users', actions: { read: ['rbac:user:read'], create: ['rbac:user:create'], edit: ['rbac:user:update', 'rbac:user:assign-role'], delete: ['rbac:user:delete'] } },
   f340: { page: '/admin/roles', actions: { read: ['rbac:role:read'], create: ['rbac:role:create'], edit: ['rbac:role:update'], delete: ['rbac:role:delete'] } },
@@ -68,6 +72,7 @@ export const adminPermissions = [
   ['rbac:log:export', '日志审计', '导出日志（阶段三）']
 ].map(([code, module, name]) => ({ code, systemCode: 'rbac', systemName: '管理后台', module, name }))
 
+// 管理派生码优先查询固定说明；业务码同时核对系统码与功能编号，避免把别的系统编号混入。
 export function describePermission(code) {
   const admin = adminPermissions.find(item => item.code === code)
   if (admin) return { ...admin, action: code.split(':')[2], functionId: null }

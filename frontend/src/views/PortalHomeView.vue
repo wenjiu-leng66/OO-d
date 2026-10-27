@@ -12,6 +12,7 @@ const functionCount = computed(() => menu.value.reduce((sum, system) => sum + sy
 const adminNav = computed(() => visibleAdminItems(auth))
 const enabledRoles = computed(() => auth.roles.filter(role => role.enabled))
 const disabledRoles = computed(() => auth.roles.filter(role => !role.enabled))
+// portalMenu 只返回至少一个可读功能的系统，因此这里可安全选择首个叶子入口。
 const firstPath = system => system.modules[0].functions[0].path
 </script>
 

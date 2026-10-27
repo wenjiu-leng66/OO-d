@@ -8,6 +8,7 @@ import { api, DEMO_PASSWORD } from '../api/mock'
 const form = reactive({ account: 'admin', password: DEMO_PASSWORD }); const loading = ref(false); const error = ref('')
 const router = useRouter(); const route = useRoute()
 const identities = api.demo.identities
+// 默认演示口令仅属于 mock；不发送 Java 登录请求。首次改密优先于登录前保存的跳转目标。
 async function submit() {
   loading.value = true; error.value = ''
   try {

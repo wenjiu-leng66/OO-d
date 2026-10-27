@@ -11,6 +11,9 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
+/**
+ * 统一 API 错误状态与 error 包络。可预期业务错误保留业务码，意外异常不把堆栈或数据库细节返回客户端。
+ */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
   private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
@@ -30,6 +33,10 @@ public class GlobalExceptionHandler {
         .body(body("VALIDATION", "Invalid request parameters or JSON body.", null));
   }
 
+  /**
+   * 业务预检查无法消除并发唯一冲突，此处把数据库约束作为最后防线。
+   * 只映射固定约束名，不把数据库原始报错内容发送给客户端。
+   */
   @ExceptionHandler(DataIntegrityViolationException.class)
   public ResponseEntity<ErrorVO> conflict(DataIntegrityViolationException e) {
     String message =
@@ -69,6 +76,9 @@ public class GlobalExceptionHandler {
     return ResponseEntity.badRequest().body(body("VALIDATION", "Missing request parameter.", null));
   }
 
+  /**
+   * 未识别异常记录服务端日志并返回通用 500；调用方不得把它当作鉴权允许或重试已成功写入。
+   */
   @ExceptionHandler(Exception.class)
   public ResponseEntity<ErrorVO> unexpected(Exception e) {
     log.error("Unhandled request exception", e);
@@ -76,6 +86,9 @@ public class GlobalExceptionHandler {
         .body(body("INTERNAL_ERROR", "Internal server error.", null));
   }
 
+  /**
+   * 生成本次错误响应的追踪标识；它不是身份令牌，也不能替代带上下文的服务端请求日志。
+   */
   private ErrorVO body(String code, String message, Map<String, Object> details) {
     return new ErrorVO(
         new ErrorVO.ErrorBody(

@@ -10,6 +10,9 @@ import java.util.*;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+/**
+ * 员工台账的真实业务接口，使用清单权限 hr:f046:*，与用户管理 rbac:user:* 分开鉴权。
+ */
 @Service
 public class LedgerService {
   private final UserMapper users;
@@ -43,6 +46,9 @@ public class LedgerService {
         u.email());
   }
 
+  /**
+   * 先裁剪查看动作的数据范围，再应用部门子树和关键词，最后分页；读取范围不复用于修改动作。
+   */
   public Map<String, Object> list(
       HttpSession session, String keyword, String departmentId, int page, int size) {
     String scope = authorization.require(session, "hr:f046:read");
@@ -64,6 +70,10 @@ public class LedgerService {
         this::view);
   }
 
+  /**
+   * PATCH 只允许电话/邮箱白名单，先检查目标范围再验证字段，阻止通过工号/角色/部门字段篡改越权。
+   * 未提供字段保留原值，显式 null 或空文本表示清空；格式及手机号唯一性均由服务端验证。
+   */
   @Transactional
   public Map<String, Object> update(HttpSession session, String id, Map<String, Object> body) {
     var target = authorization.target(session, "hr:f046:edit", id);

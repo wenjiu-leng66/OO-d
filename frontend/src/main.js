@@ -6,4 +6,5 @@ import './styles/main.css'
 import App from './App.vue'
 import router from './router'
 
+// 路由守卫由 router 初始化时注册，页面挂载前即具备身份恢复和访问判断入口。
 createApp(App).use(router).use(ElementPlus, { locale: zhCn }).mount('#app')

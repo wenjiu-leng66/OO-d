@@ -6,6 +6,7 @@ import { hasPermission } from '../policy-adapter'
 import LaterStageBanner from '../components/LaterStageBanner.vue'
 
 const tab = ref('login')
+// 日期、账号、IP 和事件均为合成静态展示，未从登录/授权操作收集真实审计记录。
 const loginLogs = [
   { time: '2026-12-01 08:58:12', account: 'SG000013', ip: '10.0.0.21', result: '成功' },
   { time: '2026-12-01 08:57:40', account: 'SG000013', ip: '10.0.0.21', result: '失败（日志内记录：密码错误）' },

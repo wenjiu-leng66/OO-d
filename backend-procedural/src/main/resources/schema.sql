@@ -12,6 +12,7 @@
 
 -- -------------------------------------------------------------
 -- 1. 组织架构
+-- 自引用外键保证上级存在，但单根、无环、深度一致由导入器和应用校验，不由外键自动证明。
 -- -------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS sys_dept (
     id              INT          NOT NULL AUTO_INCREMENT ,
@@ -33,7 +34,9 @@ CREATE TABLE IF NOT EXISTS sys_dept (
 -- -------------------------------------------------------------
 -- 2. 用户
 -- password_hash 带算法前缀, 如 {pbkdf2@SpringSecurity_v5_8}..., 由 Spring Security 的
--- DelegatingPasswordEncoder 识别; 最终算法与后端统一后再定, 列宽足够容纳 BCrypt 等格式。
+-- DelegatingPasswordEncoder 识别; 当前新密码和导入密码统一 PBKDF2，列宽兼容其他带前缀格式。
+-- 手机号 NULL 可出现多次，非空值受唯一键约束；空字符串应在应用/导入层归一为 NULL。
+-- role_version 是用户角色集合的乐观锁版本，不代表账号资料版本或会话凭据。
 -- -------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS sys_user (
     id              INT          NOT NULL AUTO_INCREMENT ,
@@ -66,6 +69,7 @@ ALTER TABLE sys_dept
 
 -- -------------------------------------------------------------
 -- 3. 角色 (RBAC0: 平铺角色, 无继承; RBAC1 再加层级关系)
+-- permission_version 与一次整组角色授权替换绑定；管理员/内置角色保护由服务层执行。
 -- -------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS sys_role (
     id              INT          NOT NULL AUTO_INCREMENT,
@@ -144,6 +148,8 @@ CREATE TABLE IF NOT EXISTS sys_permission (
 
 -- -------------------------------------------------------------
 -- 6. 关联表
+-- 联合主键禁止重复授角/授权；删除用户或角色时关联记录级联清理，避免孤立关系。
+-- data_scope 属于“角色-权限”关系，同一动作在不同角色上可以具有不同范围。
 -- -------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS sys_user_role (
     user_id         INT          NOT NULL,
@@ -165,8 +171,10 @@ CREATE TABLE IF NOT EXISTS sys_role_permission (
 );
 
 -- -------------------------------------------------------------
--- 7. 视图: 用户最终拥有的权限 (后端鉴权直接查这个视图)
+-- 7. 视图: 用户清单权限的有效范围汇总，便于数据库核对
 --    只算启用的用户和启用的角色; 同一权限被多个角色授予时, 取最大范围 (ALL > DEPT > SELF)
+--    GROUP BY 保证范围只在同一用户/同一权限码内合并，不把某动作的 ALL 扩大给另一个动作。
+--    应用层还须处理首次改密、后台派生权限和具体目标范围；此视图不是完整业务鉴权入口。
 -- -------------------------------------------------------------
 CREATE OR REPLACE VIEW v_user_permission AS
 SELECT u.id                                   AS user_id,

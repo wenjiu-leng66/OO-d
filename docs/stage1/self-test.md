@@ -2,7 +2,9 @@
 
 命令均在仓库根目录执行。先在独立的合成验收环境排练，避免重置真实员工数据。通过标准是实际结果等于本页预期，并在 [验证记录](verification-record.md) 留下版本、环境与证据；不能仅凭测试脚本存在认定通过。
 
-按用户最新要求，本轮不连接或操作用户服务器。本文服务器部署、外网检查和备份命令供用户以后自行执行；本次只在本机验证仓库代码。
+先完成助教实操，再参加老师口试。助教必须现场看到后端测试运行和覆盖率报告；完整流程见 [检查入口](README.md)，异常/边界见 [检查清单](review-checklist.md)。每次执行前先核对目标环境，以下写入自测仅用于专用合成验收实例。
+
+小组指定 API 入口为 [服务器 Swagger](http://124.70.42.35:8080/swagger-ui/index.html?url=/api-design/openapi.yaml)。公网只读检查记录见 [验证记录](verification-record.md)；现场登录及写接口由部署负责人按计划操作。
 
 ## 1. 固定检查版本
 
@@ -17,7 +19,7 @@ docker compose version
 
 记录源码 SHA 和未提交修改。要求 Python 3.11+、JDK 21、Maven、满足 Vite 版本要求的 Node；服务器运行使用 Docker Compose 2.20+。Docker 方案会在镜像内构建 Java/前端，本机只需 Docker、Git 和执行冒烟脚本的 Python。
 
-Windows有多个Python时，先确认上述`python --version`满足要求；可用`py -3.12`替换下文`python`。本次本机实测用Bundled Python3.12.14，系统默认旧Python3.8不适合直接运行这些检查。Linux通常使用`python3`。
+Windows有多个Python时，先确认上述`python --version`满足要求；可用`py -3.12`替换下文`python`。项目要求Python3.11+，不要误用系统中其他旧Python。Linux通常使用`python3`。
 
 ## 2. 先跑自动化检查
 
@@ -33,7 +35,7 @@ npm --prefix frontend run build
 git diff --check
 ```
 
-这些命令分别检查仓库/链接、导入清洗、原型与权限策略、真实 Java 后端、前端生产构建。后端测试的数据库与真实服务器 MySQL 应分开记；H2 测试通过不能替代 MySQL 与持久化检查。Maven 的 Surefire 与 JaCoCo 报告位于 `backend-procedural/target/`，运行日志留在本地，不上传员工资料或凭证。
+这些命令分别检查仓库/链接、OpenAPI、导入清洗、原型与权限策略、Java隔离单元与H2整合测试、前端生产构建。助教检查时执行完整的 `clean verify`，展示Surefire逐类结果与JaCoCo的行/分支/方法覆盖率，并说明隔离单测的mock边界。后端测试的数据库与真实服务器 MySQL 应分开记；H2 测试通过不能替代 MySQL 与持久化检查。Maven 的 Surefire 与 JaCoCo 报告位于 `backend-procedural/target/`，运行日志留在本地，不上传员工资料或凭证。
 
 ## 3. 启动服务器同款环境
 
@@ -127,3 +129,16 @@ python scripts/smoke_http.py --base-url http://127.0.0.1 --env-file deploy/.env 
 ## 8. 检查当天
 
 检查服务器容器均 healthy、外网入口可访问；保存源码 SHA、迁移版本、自动测试/HTTP自测/重启验证/全量导入报告。按“原型页面 → API设计 → 后端允许与拒绝 → 授权立即生效/409 → 重启持久化”的顺序演示。完成 [验证记录](verification-record.md) 的实际结果和限制，供老师对照。
+
+## 9. 助教现场二十分钟排练顺序
+
+| 参考顺序 | 动作 | 谁讲、用什么证据 |
+| --- | --- | --- |
+| 开始前 | 准备同一版本、网络、账号、终端和报告入口 | 孙逸轩统筹；每人核对本人模块 |
+| 原型与API | 打开原型；Swagger真实登录并调用一条允许、一条拒绝接口 | 陈清香、杨昕桐展示原型；孙逸轩核对契约 |
+| 后端部署 | 出示部署版本、容器/进程与数据库健康 | 王信凯解释实际调用链，不把localhost当服务器 |
+| 现场测试 | 运行 `mvn -f backend-procedural/pom.xml clean verify` | 王信凯、胡俊朗说明单元与整合测试结构 |
+| 覆盖率与数据 | 打开JaCoCo，讲未覆盖分支；展示迁移/导入核对范围 | 胡俊朗讲测试，郑凯讲数据 |
+| 结束 | 保存结果、缺陷与助教确认信息，再去老师时段 | 全组按实际预约安排，预留测试耗时 |
+
+表中是任务衔接，不替代每个人在老师口试中的发言。构建和依赖下载应提前准备，现场仍实际运行测试；不能只出示旧截图。

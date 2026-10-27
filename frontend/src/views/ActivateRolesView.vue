@@ -5,6 +5,7 @@ import { ElMessage } from 'element-plus'
 import { auth } from '../stores/auth'
 import LaterStageBanner from '../components/LaterStageBanner.vue'
 
+// 此 ref 只是本页勾选草稿；应用按钮不写入 auth，不能改变一期全部启用角色生效的规则。
 const active = ref(auth.roles.filter(role => role.enabled).map(role => role.id))
 const notSaved = () => ElMessage.info('阶段三实现：后端检查所选角色都已分配、彼此不动态互斥后更新会话')
 </script>

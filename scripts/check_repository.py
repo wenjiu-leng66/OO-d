@@ -1,4 +1,4 @@
-"""Check the preparation repository; this is not an application test suite."""
+"""检查仓库结构、文本编码、文档链接和合成样例引用；不执行应用功能验收。"""
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 import csv
@@ -25,10 +25,12 @@ FORBIDDEN_SUFFIXES = {'.xlsx', '.xls', '.xlsm', '.pem', '.key', '.p12', '.pfx', 
 TEXT_SUFFIXES = {'.md', '.yml', '.yaml', '.json', '.py', '.csv', '.mmd', '.java', '.xml', '.properties', '.html', '.css', '.js', '.cjs', '.mjs'}
 
 def tracked_candidates():
+    """同时检查已跟踪和未忽略的新文件，防止尚未 git add 的敏感资料绕过本地检查。"""
     result = subprocess.run(['git', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], cwd=ROOT, capture_output=True, check=True)
     return sorted({name for name in result.stdout.decode('utf-8').split('\0') if name})
 
 def markdown_links(path, text, errors):
+    """检查仓库内 Markdown 目标是否存在且未越界；外链、锚点内容和代码块示例不在此检查范围。"""
     in_fence = False
     for line_number, line in enumerate(text.splitlines(), 1):
         if re.match(r'^\s*(```|~~~)', line):
@@ -48,6 +50,7 @@ def markdown_links(path, text, errors):
                 errors.append(f'{path.relative_to(ROOT)}:{line_number}: missing local link: {target}')
 
 def sample_data(errors):
+    """核对合成员工、部门与负责人引用，不读取 data/raw 中的课程原始资料。"""
     with (ROOT / 'data/samples/users.sample.csv').open(encoding='utf-8', newline='') as file:
         users = list(csv.DictReader(file))
     with (ROOT / 'data/samples/departments.sample.csv').open(encoding='utf-8', newline='') as file:
@@ -69,6 +72,7 @@ def sample_data(errors):
             errors.append(f'Synthetic parent department is missing: {row["name"]}')
 
 def main():
+    # REQUIRED 描述本仓库协作结构；精简交付版若改变文档布局，应同步维护此清单与引用。
     errors = []
     for name in REQUIRED:
         if not (ROOT / name).is_file():
@@ -97,6 +101,7 @@ def main():
             text_count += 1
             if '\ufffd' in text:
                 errors.append(f'Encoding replacement character found: {name}')
+            # 这里只匹配明显私钥头，不是全面的密钥/个人数据检测；提交前仍需审查实际差异。
             if re.search(r'-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----', text):
                 errors.append(f'Private key material found: {name}')
             if re.search(r'^(<{7}|={7}|>{7})(?:\s.*)?$', text, re.MULTILINE):

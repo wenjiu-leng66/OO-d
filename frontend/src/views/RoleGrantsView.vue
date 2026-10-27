@@ -12,11 +12,14 @@ import { functions, systems, modules, actions, scopeOptions, scopeLabel, adminMa
 const route = useRoute()
 const roles = ref([]); const roleId = ref(''); const loading = ref(true); const saving = ref(false)
 const failed = ref(''); const rolesFailed = ref(false); const loadedRoleId = ref(''); const switching = ref(false)
+// original 是最后一次成功读取/保存的快照；draft 覆盖完整授权集合，不随筛选或翻页裁剪。
+// version 必须与该快照一起使用；不能只发送当前页，避免误撤销其他页授权。
 const version = ref(0); const original = ref(new Map()); const draft = ref(new Map()); const roleReadOnly = ref(false)
 const systemCode = ref(''); const moduleName = ref(''); const keyword = ref(''); const onlyChecked = ref(false)
 const page = ref(1); const size = 12; const simulateFailure = ref(false)
 
 const canGrant = computed(() => hasPermission(auth, 'rbac:role:grant'))
+// 加载中、读取失败、身份无权或角色切换未完成时关闭编辑，不能在未知旧授权上继续保存。
 const readOnly = computed(() => roleReadOnly.value || !canGrant.value || loading.value || Boolean(failed.value) || !roleId.value || loadedRoleId.value !== roleId.value)
 const editingDisabled = computed(() => readOnly.value || saving.value)
 const role = computed(() => roles.value.find(item => item.id === roleId.value))
@@ -35,6 +38,7 @@ const diff = computed(() => {
   return { added, removed, changed, total: added.length + removed.length + changed.length }
 })
 
+// 请求号 + 发起身份 + 目标角色 + 组件存活四重条件抑制过期响应，避免快速切换覆盖新草稿。
 let requestSequence = 0; let alive = true
 const currentActor = () => auth.user?.id
 const isCurrent = (request, actor, id = roleId.value) => alive && request === requestSequence && currentActor() === actor && roleId.value === id
@@ -47,6 +51,7 @@ function applyGrants(data) {
   original.value = new Map(data.grants.map(grant => [grant.code, grant.scope]))
   draft.value = new Map(original.value)
 }
+// 先清旧授权再异步读取，失败时保留显式失败态，不把空集合误当成“该角色没有授权”。
 async function loadRole(id = roleId.value) {
   if (!id || saving.value) return
   const request = ++requestSequence; const actor = currentActor()
@@ -73,6 +78,7 @@ async function initialize() {
     if (isCurrent(request, actor, '')) { rolesFailed.value = true; failed.value = error.message; loading.value = false }
   }
 }
+// 路由离开、切换角色和刷新均保护未保存草稿；正在保存时等待明确结果，不能提前切走。
 async function confirmDiscard(title = '离开角色授权') {
   if (saving.value) { ElMessage.warning('授权正在保存，请等待结果后再操作'); return false }
   if (!diff.value.total) return true
@@ -107,6 +113,8 @@ function retry() {
   if (rolesFailed.value) initialize(); else loadRole()
 }
 
+// 写操作依赖同功能点 read：选中写自动补 read；取消 read 一并撤销该功能点全部动作。
+// 每次复制 Map 再替换 ref，使响应式差异计算能可靠触发。
 function toggle(fn, action, checked) {
   if (editingDisabled.value) return
   const next = new Map(draft.value)
@@ -128,6 +136,8 @@ function simulateOtherAdmin() {
   api.demo.bumpRoleGrantVersion(roleId.value)
   ElMessage.warning('已模拟：另一位管理员刚保存了这个角色的授权，服务端版本号 +1。现在点保存会收到 409。')
 }
+// 保存冻结目标/身份/请求号及旧快照，成功响应只应用于仍然相同的编辑上下文。
+// 409 必须重新读取再复核；500 保留草稿并尝试回读服务器集合，不假装已经保存或自动重试覆盖。
 async function save() {
   if (editingDisabled.value || !diff.value.total) return
   const id = roleId.value; const actor = currentActor(); const request = requestSequence
@@ -163,6 +173,7 @@ async function save() {
 watch([systemCode, moduleName, keyword, onlyChecked], () => { page.value = 1 })
 watch(systemCode, () => { moduleName.value = '' })
 
+// 演示身份变化后立刻丢弃旧授权和在途响应；新身份不能继承前一身份打开的草稿。
 watch(() => auth.user?.id, () => {
   ++requestSequence; clearGrants(); roles.value = []; roleId.value = ''; saving.value = false; failed.value = ''; loading.value = false
 })

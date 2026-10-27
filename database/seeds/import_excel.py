@@ -82,6 +82,7 @@ def warn(msg):
 
 # ------------------------------------------------------------------ 读表
 def _col_index(ref):
+    """把 A1/AA12 的列名按 26 进制转换为零基下标，保留稀疏行中的空列位置。"""
     n = 0
     for ch in re.match(r"[A-Z]+", ref).group():
         n = n * 26 + ord(ch) - 64
@@ -105,7 +106,7 @@ def read_xlsx(path, sheet_index=0):
         root = ET.fromstring(z.read("xl/sharedStrings.xml"))
         for si in root.findall("m:si", NS):
             shared.append("".join(t.text or "" for t in si.iter("{%s}t" % NS["m"])))
-    # 按 workbook.xml 中的顺序找到对应 sheet 文件
+    # sheet 显示顺序不等于 sheet1.xml 的编号；通过关系文件定位，避免读错工作表。
     wb = ET.fromstring(z.read("xl/workbook.xml"))
     rels = ET.fromstring(z.read("xl/_rels/workbook.xml.rels"))
     rel_target = {r.get("Id"): r.get("Target") for r in rels}
@@ -132,6 +133,7 @@ def read_xlsx(path, sheet_index=0):
                 text = _number_text(v.text or "")
             else:
                 text = v.text or ""
+            # 以单元格坐标填空，而不是直接追加；缺省单元格不能导致手机号等后续列左移。
             vals[_col_index(c.get("r"))] = text.strip()
         if any(vals.values()):
             rows.append((int(row.get("r")), [vals.get(i, "") for i in range(max(vals) + 1)]))
@@ -148,6 +150,7 @@ def read_table(path):
 
 
 def find_header(rows, names, what):
+    """只在前十条非空记录中定位候选表头；各加载器再核对自身必需列。"""
     for i, (_, cells) in enumerate(rows[:10]):
         if set(cells) & set(names):
             return i
@@ -162,6 +165,7 @@ def pad(cells, n):
 def build_depts(records):
     """records: [{"row", "name", "manager", "parent"}]。补 id / parent_id / level / type / short_name。"""
     by_name = {}
+    # 先登记所有部门再解析父节点，允许源表中下级出现在上级之前。
     for idx, d in enumerate(records, 1):
         if d["name"] in by_name:
             raise DataError(f"部门表第{d['row']}行: 部门名称 {d['name']} 与第{by_name[d['name']]['row']}行重复")
@@ -294,6 +298,7 @@ def load_permissions(path, system_codes):
         if fkey in fn_keys:
             raise DataError(f"权限清单第{no}行: 功能点 {r[i_fn]} 与第{fn_keys[fkey]}行在同一模块中重复")
         fn_keys[fkey] = no
+        # seq 只关联本次清单与授权；跨版本稳定的 function.id 稍后由编号表决定。
         seq = len(functions) + 1
         functions.append({"seq": seq, "row": no, "system": cur_sys, "module": cur_mod,
                           "module_id": mod_ids[mkey], "name": r[i_fn], "desc": r[i_desc] or None})
@@ -356,6 +361,7 @@ def load_function_codes(path):
 def number_functions(functions, known, allow_new):
     """按编号表给功能点补 id。清单里新出现的功能点: allow_new 时接着最大编号往后编, 否则停止导入。
     返回新登记的功能点。编号表里有、清单里没有的编号保留不复用。"""
+    # 不能按当前行号重新编号，否则删除/换序会把已有授权绑定到另一个功能点。
     next_num = max(known.values(), default=0) + 1
     new = []
     for f in functions:
@@ -377,6 +383,7 @@ def number_functions(functions, known, allow_new):
 
 
 def save_function_codes(path, known, new):
+    """按稳定编号重写注册表；此文件是版本化契约，不是每次导入生成的临时数据。"""
     entries = sorted([(num, key) for key, num in known.items()] +
                      [(f["id"], (f["system"], f["module"], f["name"])) for f in new])
     with open(path, "w", encoding="utf-8", newline="") as fh:
@@ -392,6 +399,7 @@ def perm_id(function_id, action_id):
 
 
 def build_permissions(systems, modules, functions):
+    """为每个功能点建立六动作目录；目录存在不代表任意角色已经获得这六项授权。"""
     sys_code = {sid: code for sid, code, _ in systems}
     mod_sys = {mid: sid for mid, sid, _ in modules}
     return [(perm_id(f["id"], aid), f["id"], aid, f"{sys_code[mod_sys[f['module_id']]]}:{fcode(f['id'])}:{acode}")
@@ -431,6 +439,8 @@ def build_employees(rows, dept_by_name, root_name):
     if idx["username"] is None:
         warn("员工表没有工号列, 按顺序生成用户名 E0001、E0002…")
 
+    # 员工级错误逐行收集，其他合法员工仍会生成 SQL；退出成功不代表 failed 为空。
+    # 部门全称负责消歧，不能把不同分公司的同名部门、同名员工合并。
     emps, failed, seen, seen_phone = [], [], {}, {}
     for no, r in rows[h + 1:]:
         r = pad(r, len(head))
@@ -464,6 +474,7 @@ def build_employees(rows, dept_by_name, root_name):
         gender = {"男": "M", "女": "F", "M": "M", "F": "F"}.get(gender_text)
         if gender_text and gender is None:
             warn(f"员工表第{no}行: 性别 '{gender_text}' 无法识别, 置空")
+        # 只把已通过所有校验的行加入唯一索引，避免坏行阻挡后续可导入的有效记录。
         if username:
             seen[username] = no
         if phone:
@@ -530,6 +541,7 @@ def link_managers(depts, users, dept_by_id):
         if not d["manager"] or d["manager_user_id"]:
             continue
         same = [u for u in by_name.get(d["manager"], []) if u["username"] not in RESERVED_USERNAMES]
+        # 本部门候选优先；只有本部门完全没有候选时才看直接下级，不做任意后代或全库猜测。
         cands = [u for u in same if u["dept_id"] == d["id"]] or [u for u in same if parent_of(u) == d["id"]]
         if len(cands) == 1:
             d["manager_user_id"] = cands[0]["id"]
@@ -546,10 +558,12 @@ def build_users(depts, emps, dept_by_id):
     """返回 (用户列表, 负责人关联不上的部门)。用户含 id/username/roles, 密码哈希另算。"""
     users = [{"username": "admin", "real_name": "系统管理员", "dept_id": None, "position": "系统管理员",
               "gender": None, "phone": None, "email": None, "roles": {ROLE_ADMIN}}]
+    # None 表示未提供员工表，空列表表示提供了表但没有合法员工，两种情况不能混淆。
     if emps is not None:
         users += emps
     else:
-        # 没有员工表: 每位部门经理生成一个用户 (同名视为同一人, 部门取其管理的最后一个部门)
+        # 无员工表时仅生成演示回退用户；这里按负责人同名合并，不可作为真实员工消歧依据。
+        # 部门取其管理的最后一个部门，正式全量验收必须提供员工表并核对负责人关联。
         managed = {}
         for d in depts:
             if d["manager"]:
@@ -588,6 +602,7 @@ def build_users(depts, emps, dept_by_id):
 
 
 def password_hash(raw, salt=None):
+    """生成与后端兼容的慢哈希；每账号独立随机盐，salt 参数仅供已知答案测试固定输入。"""
     salt = secrets.token_bytes(PBKDF2_SALT_BYTES) if salt is None else salt
     dk = hashlib.pbkdf2_hmac("sha256", raw.encode("utf-8"), salt, PBKDF2_ITERATIONS, PBKDF2_HASH_BYTES)
     return "{%s}%s" % (PBKDF2_ID, (salt + dk).hex())
@@ -595,6 +610,7 @@ def password_hash(raw, salt=None):
 
 # ------------------------------------------------------------------ SQL 输出
 def q(v):
+    """生成 MySQL 字面量，适用于当前默认反斜杠转义模式；不接受外部表名或列名。"""
     if v is None:
         return "NULL"
     if isinstance(v, int):
@@ -603,6 +619,7 @@ def q(v):
 
 
 def insert(out, table, cols, rows, batch=200):
+    """分批拼接离线 SQL，限制单条 INSERT 体积；本函数不连接或写入数据库。"""
     for i in range(0, len(rows), batch):
         out.append(f"INSERT INTO {table} ({', '.join(cols)}) VALUES")
         chunk = rows[i:i + batch]
@@ -617,10 +634,16 @@ def platform_department_admin_grants(perms):
         "sys:f339:edit": "DEPT", "sys:f339:delete": "DEPT",
         "sys:f340:read": "ALL", "sys:f342:read": "DEPT",
     }
+    # 只授予当前目录实际存在的权限；小样例缺少某功能时不凭空创建未知权限。
     return [(ROLE_DEPT_ADMIN, pid, scopes[code]) for pid, _, _, code in perms if code in scopes]
 
 
 def render_sql(depts, users, systems, modules, functions, perms, grants):
+    """生成全量重建脚本，不是增量迁移：TRUNCATE 会丢弃现有业务修改且不能事务回滚。
+
+    先插部门但暂不填负责人，再插用户并回填负责人，解除部门与用户的相互外键依赖。
+    外键检查只在清空阶段关闭，不能把本脚本的重跑等同于无损恢复。
+    """
     by_seq = {f["seq"]: f for f in functions}
     out = [
         "-- 由 database/seeds/import_excel.py 生成, 请勿手改; 改源表后重新生成。",
@@ -684,6 +707,7 @@ def run(dept_path, perm_path, emp_path, out_path, initial_password,
     known = load_function_codes(function_codes_path)
     new_codes = number_functions(functions, known, update_codes)
     if new_codes:
+        # --update-codes 是显式的契约变更；后续阶段失败也可能已写此文件，需检查 Git 差异。
         save_function_codes(function_codes_path, known, new_codes)
     perms = build_permissions(systems, modules, functions)
     emps, failed, emp_rows = None, [], 0
@@ -691,7 +715,8 @@ def run(dept_path, perm_path, emp_path, out_path, initial_password,
         emps, failed = load_employees(emp_path, dept_by_name, root["name"])
         emp_rows = len(emps) + len(failed)
     users, unresolved = build_users(depts, emps, dept_by_id)
-    # 每个哈希约 0.1 秒, 1 万个账号串行要十几分钟; hashlib 计算时释放 GIL, 多线程即可并行
+    # 哈希成本随机器变化；hashlib 计算会释放 GIL，用线程池并行，并保留输入/输出顺序。
+    # 业务快照比较应排除带随机盐的哈希，不能因两次 SQL 字节不同就判定业务导入不幂等。
     with ThreadPoolExecutor() as pool:
         for u, h in zip(users, pool.map(password_hash, [initial_password] * len(users))):
             u["password_hash"] = h
@@ -702,6 +727,7 @@ def run(dept_path, perm_path, emp_path, out_path, initial_password,
     with open(out_path, "w", encoding="utf-8", newline="\n") as f:
         f.write(render_sql(depts, users, systems, modules, functions, perms, grants).rstrip("\n") + "\n")
 
+    # 清单五角色与平台部门管理员分开统计；数量要结合失败行、未关联负责人和警告一起判读。
     role_count = {code: sum(rid in u["roles"] for u in users) for rid, code, _, _, _ in ROLES}
     with_mgr = [d for d in depts if d["manager"]]
     stats = {"depts": len(depts), "users": len(users), "systems": len(systems), "modules": len(modules),

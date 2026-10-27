@@ -52,6 +52,7 @@
     roleSearch: '', catalogSearch: '', message: '', saving: false, generation: 0
   };
   var toastTimer;
+  // 搜索词等可变文本进入 innerHTML 前转义；不把用户输入当作 HTML 拼接。
   function escape(value) { return String(value).replace(/[&<>"']/g, function (char) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]; }); }
   function findRole(id) { return state.roles.find(function (role) { return role.id === id; }); }
   function findUser(id) { return state.users.find(function (user) { return user.id === id; }); }
@@ -151,6 +152,8 @@
     var available = policy.visibleRoutes(session(), routes);
     return '<section class="state-page"><div class="state-code">' + (unauthenticated ? '登录' : '403') + '</div><h1>' + (unauthenticated ? '请先登录' : '当前身份无法访问此页面') + '</h1><p>' + (unauthenticated ? '这是登录占位页。使用顶部“当前身份”选择一个演示用户，再访问所需页面。' : '请求路径：' + escape(current) + '。此页面需要相应的功能权限；直接输入地址也会检查。') + '</p>' + (available.length ? '<a class="button" href="#' + available[0].path + '">前往可访问页面</a>' : '<button class="button secondary" data-action="admin-identity">切换演示管理员</button>') + '</section>';
   }
+  // 整块重绘会替换输入框，保存焦点与光标后再恢复，避免搜索每输入一字就失焦。
+  // 未登录、权限加载中、未知路由和无权限均在选择具体页面前处理。
   function render() {
     var focus = document.activeElement;
     var focusId = focus ? focus.id : '';
@@ -168,6 +171,8 @@
       if (replacement && !replacement.disabled) { replacement.focus({ preventScroll: true }); if (selection !== null && typeof replacement.setSelectionRange === 'function') replacement.setSelectionRange(selection, selection); }
     }
   }
+  // 冻结目标、草稿、版本及 generation；延时结束仍重新查权限与版本后才能写入。
+  // 这是历史纯浏览器示例，不是事务或真实服务端并发测试。
   function save(kind) {
     var code = kind === 'role' ? 'rbac:role:grant' : 'rbac:user:assign-role';
     if (!allowed(code) || state.saving) { toast('当前身份不能执行此操作。', true); return; }
@@ -229,6 +234,7 @@
     render();
   }
 
+  // 容器事件委托在 innerHTML 重绘后仍有效；所有写动作仍再次判断权限，不依赖控件禁用。
   main.addEventListener('click', function (event) {
     var roleButton = event.target.closest('[data-role-id]');
     if (roleButton && !state.saving) { state.selectedRoleId = roleButton.dataset.roleId; loadRoleDraft(); render(); return; }

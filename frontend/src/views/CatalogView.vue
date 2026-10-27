@@ -8,6 +8,7 @@ const tab = ref('catalog')
 const loading = ref(false); const failed = ref(false)
 const systemCode = ref(''); const moduleName = ref(''); const keyword = ref(''); const page = ref(1); const size = 12
 const result = ref({ items: [], total: 0, stats: null })
+// 只应用最近一次查询结果；旧请求的成功/失败/finally 均不能覆盖新筛选状态。
 let requestVersion = 0
 const moduleOptions = computed(() => modules.filter(item => !systemCode.value || item.systemCode === systemCode.value))
 const mappingRows = computed(() => Object.entries(adminMapping).flatMap(([id, item]) =>
@@ -24,6 +25,7 @@ async function load() {
     if (request === requestVersion) loading.value = false
   }
 }
+// 系统变化先清模块，再重置页码，避免把上一系统的模块条件带入新系统。
 function search() { page.value = 1; load() }
 watch(systemCode, () => { moduleName.value = '' })
 watch([systemCode, moduleName], search)

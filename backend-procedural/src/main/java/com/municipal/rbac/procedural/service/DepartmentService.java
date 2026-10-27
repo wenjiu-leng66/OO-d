@@ -8,6 +8,9 @@ import jakarta.servlet.http.HttpSession;
 import java.util.*;
 import org.springframework.stereotype.Service;
 
+/**
+ * 组织树和组织成员查询。一阶段组织结构由数据库/离线导入维护，此服务不开放任意改树。
+ */
 @Service
 public class DepartmentService {
   private final DepartmentMapper departments;
@@ -26,6 +29,10 @@ public class DepartmentService {
     this.me = me;
   }
 
+  /**
+   * 先裁剪可见部门，再从其可见根节点构树。DEPT 以本人部门及下级为边界，
+   * 即使上级节点不可见，也不能因此把整个可见子树丢失。
+   */
   public List<Map<String, Object>> tree(HttpSession session) {
     String scope = authorization.require(session, "rbac:department:read");
     var actor = authorization.current(session);
@@ -48,6 +55,10 @@ public class DepartmentService {
         .toList();
   }
 
+  /**
+   * employeeCount 为直属员工数，totalCount 含全部下级；children 只从已裁剪的可见节点中组装。
+   * 这里假定离线导入已保证父子关系无环；负责人名称按负责人 ID 查询，不通过同名员工推断。
+   */
   private Map<String, Object> node(DepartmentPO d, List<DepartmentPO> visible, List<UserPO> staff) {
     var subtree = departments.subtree(d.id());
     return map(
@@ -78,6 +89,10 @@ public class DepartmentService {
             .toList());
   }
 
+  /**
+   * 部门节点合法且在范围内仍不足以返回所有成员；还须逐员工执行 visible。
+   * 这一步确保 SELF 只能返回本人，而不会把同部门同事一并暴露。
+   */
   public Map<String, Object> members(HttpSession session, String id, int page, int size) {
     String scope = authorization.require(session, "rbac:department:read");
     if (!authorization.coversDepartment(authorization.current(session), scope, id)

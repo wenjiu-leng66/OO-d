@@ -1,6 +1,7 @@
 'use strict';
 
 // 界面原型的模拟后端按需求规格第 3 章验收标准运行。测试按顺序共享同一份内存数据。
+// 这些断言覆盖原型交互与策略，不发送 HTTP，也不证明 Java/MySQL 会话或事务行为。
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
@@ -267,6 +268,7 @@ test('同一版本并发保存角色授权，只成功一次，另一请求409�
   const left = [{ code: 'hr:f046:read', scope: 'SELF' }];
   const right = [{ code: 'oa:f001:read', scope: 'DEPT' }];
   try {
+    // 同时发出两份不同集合，不能只测同集合保存两次；最终结果必须等于唯一成功请求。
     const results = await Promise.allSettled([
       api.saveRoleGrants(role.id, left, 1), api.saveRoleGrants(role.id, right, 1)
     ]);
@@ -299,6 +301,7 @@ test('同一版本并发替换用户角色，只成功一次且用户版本仅�
 });
 
 test('保存等待期间退出身份，不写入旧会话的授权或用户角色', async () => {
+  // 原型有模拟异步延迟；在请求完成前退出，验证旧会话任务不能借新登录态继续写入。
   await as('admin');
   const before = await api.getRoleGrants('R07');
   const userBefore = await api.getUser('u0004');
@@ -336,6 +339,7 @@ test('并发新建同编码角色仅创建一次，重复请求409（ROLE-01）'
 });
 
 test('退出会话取消所有延迟中的角色维护，不创建/编辑/停用/删除角色', async () => {
+  // 先挂起全部维护请求再同步退出，最后重新登录读取，排除“只是返回 401 但已写入”的情况。
   await as('admin');
   const role = await api.createRole({ code: 'CANCEL_ROLE', name: '原角色' });
   const pending = Promise.all([

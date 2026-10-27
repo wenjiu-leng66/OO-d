@@ -1,7 +1,7 @@
 /*
- * RBAC0 presentation policy: protects navigation and controls UI visibility.
- * The backend must authenticate and authorize every protected API request.
- * This file is a classic browser script and a dependency-free CommonJS module.
+ * RBAC0 展示层策略：统一菜单、路由和按钮的权限判断。
+ * 它不构成服务端安全边界；Java 后端仍须独立校验每次请求和数据范围。
+ * 同一文件兼容浏览器经典脚本与 CommonJS，使历史原型、Vue 和 Node 测试复用规则。
  */
 (function (root, createPolicy) {
   'use strict';
@@ -18,6 +18,7 @@
     return typeof value === 'string' && value.length > 0 && value.trim() === value;
   }
 
+  // 必须同时完成身份认证和权限加载；加载失败/尚未加载不能视为“暂时拥有权限”。
   function readySession(session) {
     return Boolean(session && session.authenticated === true &&
       session.permissionsLoaded === true && Array.isArray(session.permissions));
@@ -27,6 +28,7 @@
     return readySession(session) && isCode(code) && session.permissions.includes(code);
   }
 
+  // 只接受站内绝对路径；双斜线、空白和类型错误均不能产生可访问路由。
   function validRoute(route) {
     return Boolean(route && typeof route === 'object' && !Array.isArray(route) &&
       typeof route.path === 'string' && /^\/(?!\/)\S*$/.test(route.path) &&
@@ -37,6 +39,11 @@
     return { allowed: false, redirect: redirect, reason: reason };
   }
 
+  /**
+   * 默认拒绝：公开页须显式声明；受保护页必须声明非空且有效的权限规则。
+   * 默认要求全部权限，只有显式 match=any 才采用任一满足；无配置不等于无权限限制。
+   * 返回原因供路由与测试区分未登录、权限未加载、规则错误和确实无权。
+   */
   function canVisit(session, route) {
     var knownRoute = validRoute(route);
     if (knownRoute && route.public === true) {
@@ -71,6 +78,8 @@
     return routes.filter(function (route) { return canVisit(session, route).allowed; });
   }
 
+  // 历史纯权限码原型的兼容入口；带数据范围的新原型使用 effectiveGrants。
+  // 仅汇总已分配且未停用角色；排序使菜单和断言结果不受角色遍历顺序影响。
   function effectivePermissionCodes(user, roles) {
     if (!user || !Array.isArray(user.roleIds) || !Array.isArray(roles)) return [];
     var assigned = new Set(user.roleIds.filter(isCode));
@@ -98,6 +107,7 @@
   }
 
   // 角色授权为 grants: [{ code, scope }]；旧样例只有 permissionCodes 时视为“全部”。
+  // 兼容仅限本文件的旧样例数据格式；正式导入/API 不应靠缺省值扩大数据范围。
   function roleGrantList(role) {
     if (Array.isArray(role.grants)) {
       return role.grants.filter(function (grant) {
@@ -111,6 +121,11 @@
   }
 
   // 有效权限：已分配且启用的角色授权取并集；同一权限码取最大范围，不同权限码的范围互不影响。
+  /**
+   * 以权限码为合并键，保留各角色原始 scope 作为来源，合并后的 scope 只影响同一码。
+   * 例如 read=ALL 与 edit=SELF 同时存在时，不能把 edit 也扩大为 ALL。
+   * 阶段一只计算直接分配；这里没有角色继承、SSD/DSD 或会话激活集合。
+   */
   function effectiveGrants(user, roles) {
     if (!user || !Array.isArray(user.roleIds) || !Array.isArray(roles)) return [];
     var assigned = new Set(user.roleIds.filter(isCode));
@@ -140,6 +155,8 @@
 
   // 目标记录是否落在范围内。target: { ownerId, departmentId }；
   // isWithin(目标部门, 用户部门) 判断目标部门是否为用户部门本身或其下级，由调用方按部门树实现。
+  // SELF 比较稳定的用户 ID，DEPT 委托部门树判断，不能按显示姓名/部门名称判断归属。
+  // 非法范围、缺少对象或缺少 DEPT 判断器全部返回 false。
   function scopeCovers(scope, actor, target, isWithin) {
     if (!isScope(scope) || !actor || !target) return false;
     if (scope === 'ALL') return true;

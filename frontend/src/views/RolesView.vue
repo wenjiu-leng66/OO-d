@@ -17,6 +17,7 @@ const loading = ref(false); const failed = ref(false); const saving = ref(false)
 const keyword = ref('')
 const can = code => hasPermission(auth, code)
 const filtered = computed(() => roles.value.filter(role => !keyword.value || `${role.code}${role.name}`.includes(keyword.value.trim().toUpperCase()) || role.name.includes(keyword.value.trim())))
+// 角色列表与成员抽屉各有请求序号；异步结果还须匹配当前身份并确保组件尚未卸载。
 let alive = true; let listRequest = 0; let usersRequest = 0
 const currentActor = () => auth.user?.id
 async function load() {
@@ -32,6 +33,7 @@ async function load() {
 
 const formVisible = ref(false); const formRef = ref(); const editing = ref(null)
 const form = reactive({ code: '', name: '', description: '' })
+// 记录打开表单时的值，关闭/换页时才能区分“真正修改”与仅打开查看。
 const originalForm = ref('')
 const formDirty = computed(() => formVisible.value && JSON.stringify(form) !== originalForm.value)
 const rules = {
@@ -57,6 +59,7 @@ async function confirmDiscard() {
 async function closeForm(done) {
   if (await confirmDiscard()) { formVisible.value = false; if (typeof done === 'function') done() }
 }
+// 在 await 校验之后再次核对身份；角色编码只在新增时使用，编辑只改名称和说明。
 async function submit() {
   if (saving.value) return
   const actor = currentActor(); const id = editing.value?.id
@@ -83,6 +86,7 @@ async function toggle(role) {
   } catch (error) { if (alive && actor === currentActor()) ElMessage.error(error.message) }
   finally { if (alive && actor === currentActor()) saving.value = false }
 }
+// 自建角色若仍有用户，接口先拒绝，再要求明确二次确认；取消不会触发 confirmed=true 写入。
 async function remove(role) {
   if (saving.value) return
   const actor = currentActor()
@@ -125,6 +129,7 @@ onBeforeRouteUpdate(async () => {
   if (allowed) formVisible.value = false; else tab.value = tabOf(route.query.tab)
   return allowed
 })
+// 清空旧身份的列表/弹窗并让在途请求失效，避免身份切换后回显旧数据。
 watch(() => auth.user?.id, () => {
   ++listRequest; ++usersRequest; roles.value = []; roleUsers.value = []; formVisible.value = false; usersVisible.value = false; saving.value = false
 })

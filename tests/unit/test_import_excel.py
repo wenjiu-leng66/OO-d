@@ -167,6 +167,7 @@ class DeptKeyTest(unittest.TestCase):
 
 
 class EmployeesAndManagersTest(unittest.TestCase):
+    """负责人必须由组织位置与唯一用户共同确定，重名或部门不匹配时保持未关联。"""
     HEAD = ["name", "username", "company", "department", "position"]
 
     def setUp(self):
@@ -291,6 +292,7 @@ class EmployeesAndManagersTest(unittest.TestCase):
 
 
 class PasswordHashTest(unittest.TestCase):
+    """固定盐核验跨语言编码协议，随机盐核验账号间隔离；两种断言承担不同责任。"""
     def test_known_answer_matches_spring_security_layout(self):
         # 期望值由 Java 8 的 PBKDF2WithHmacSHA256 按 Spring Pbkdf2PasswordEncoder 的算法独立算出;
         # 输入是测试专用字符串、盐全为 0, 不是任何账号的密码哈希
@@ -320,7 +322,7 @@ def fn(system, module, name, row=2):
 
 
 class CodesTest(unittest.TestCase):
-    """系统短码表、功能点编号表和权限码 系统码:功能点编号:动作。"""
+    """系统短码表、功能点编号表与权限码：换序不换码，删除不复用，新增必须显式登记。"""
 
     def setUp(self):
         ie.warnings.clear()
@@ -373,6 +375,7 @@ class CodesTest(unittest.TestCase):
 
 
 class PlatformDepartmentAdminTest(unittest.TestCase):
+    """平台补充授权与原清单分开，并且不能授出角色授权管理等越权能力。"""
     def test_platform_grants_are_scoped_and_do_not_add_grant_management(self):
         perms = [(i, 339, 1, code) for i, code in enumerate([
             "sys:f339:read", "sys:f339:create", "sys:f339:edit", "sys:f339:delete",
@@ -386,7 +389,10 @@ class PlatformDepartmentAdminTest(unittest.TestCase):
 
 
 class EndToEndTest(unittest.TestCase):
-    """合成 Excel -> SQL: 合并单元格向下填充、空行、行号、失败行报告、编号稳定、密码不落地。"""
+    """合成 Excel -> SQL/报告：合并格、空行、行号、失败行、稳定编号与密码不落地。
+
+    不连接 MySQL，也不证明课程真实 Excel 全量导入已经通过。
+    """
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()

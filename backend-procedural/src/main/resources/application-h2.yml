@@ -1,3 +1,4 @@
+# 本地/自动测试方言。schema.sql 由正式 MySQL V001 机械转换，不能把 H2 通过当作 MySQL 验收。
 spring:
   datasource:
     url: ${H2_URL:jdbc:h2:file:./work/rbac-local;MODE=MySQL;DB_CLOSE_DELAY=-1}

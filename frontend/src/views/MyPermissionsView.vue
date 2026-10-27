@@ -6,6 +6,7 @@ import { describePermission, actionLabel, scopeLabel, systems } from '../api/fix
 import ScopeTag from '../components/ScopeTag.vue'
 
 const keyword = ref(''); const systemCode = ref(''); const page = ref(1); const size = 15
+// 只给会话中已有 grants 补目录说明，不能反过来把完整资源目录当作用户拥有的授权。
 const rows = computed(() => auth.grants.map(grant => {
   const info = describePermission(grant.code) || {}
   return { ...grant, ...info, scope: grant.scope, actionLabel: info.systemCode === 'rbac' ? info.name : actionLabel(info.action) }
@@ -18,6 +19,7 @@ const filtered = computed(() => rows.value.filter(row =>
   (!searchText.value || `${row.code}${row.name}${row.module}`.toLowerCase().includes(searchText.value))))
 const paged = computed(() => filtered.value.slice((page.value - 1) * size, page.value * size))
 const scopeCounts = computed(() => ['ALL', 'DEPT', 'SELF'].map(scope => ({ scope, count: rows.value.filter(row => row.scope === scope).length })))
+// 授权撤销或筛选使结果变少时收缩页码，避免末页越界显示空白。
 watch(() => filtered.value.length, total => { page.value = Math.min(page.value, Math.max(1, Math.ceil(total / size))) })
 </script>
 

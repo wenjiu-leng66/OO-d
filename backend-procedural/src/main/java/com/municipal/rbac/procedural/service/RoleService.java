@@ -12,6 +12,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
+/**
+ * 角色生命周期及权限集合管理。一阶段只处理直接授权，不在此计算角色继承。
+ * 读角色、读权限目录、修改授权是不同动作；内置角色和 ADMIN 具有额外保护规则。
+ */
 @Service
 public class RoleService {
   private final RoleMapper roles;
@@ -91,6 +95,9 @@ public class RoleService {
         requireRole(roles.insert(r.code(), r.name(), UserService.normalize(r.description()))));
   }
 
+  /**
+   * 仅更新名称和说明，不修改稳定角色编码；显示名变动不应破坏导入和授权引用。
+   */
   @Transactional
   public Map<String, Object> update(HttpSession session, String id, Requests.UpdateRole r) {
     authorization.require(session, "rbac:role:update");
@@ -108,6 +115,10 @@ public class RoleService {
     return view(requireRole(id));
   }
 
+  /**
+   * 持有角色行锁后再检查关联用户，防止检查为空到实际删除之间被并发分配。
+   * 内置角色不可删除；自建角色有用户时需 confirm，确认后事务内清理授权和分配并增加受影响用户版本。
+   */
   @Transactional(isolation = Isolation.READ_COMMITTED)
   public void delete(HttpSession session, String id, boolean confirm) {
     authorization.require(session, "rbac:role:delete");
@@ -121,6 +132,10 @@ public class RoleService {
     roles.delete(id, assignedUsers);
   }
 
+  /**
+   * 拥有角色查看权不等于能看所有员工：成员列表还须应用 rbac:user:read 的独立数据范围。
+   * 无员工查看范围时返回空可见集合，分页总数也只统计可见记录。
+   */
   public Map<String, Object> roleUsers(HttpSession session, String id, int page, int size) {
     authorization.require(session, "rbac:role:read");
     requireRole(id);
@@ -152,24 +167,33 @@ public class RoleService {
         "ADMIN".equals(role.code()));
   }
 
+  /**
+   * 同时要求角色查看与权限目录查看，返回原始 grants 与 permissionVersion，而非某个用户的合并有效权限。
+   */
   public Map<String, Object> rolePermissions(HttpSession session, String id) {
     authorization.require(session, "rbac:role:read");
     authorization.require(session, "rbac:permission:read");
     return assignment(requireRole(id));
   }
 
+  /**
+   * 替换整个 grants 集合并用 permissionVersion 检测并发覆盖；ADMIN 授权始终只读。
+   * 先验证权限码、重复项和 read 依赖，再写版本与关系，失败时同一事务全部回滚。
+   */
   @Transactional(isolation = Isolation.READ_COMMITTED)
   public Map<String, Object> replacePermissions(HttpSession session, String id, Requests.Grants r) {
     authorization.require(session, "rbac:role:grant");
     var role =
         roles.lockById(id).orElseThrow(() -> ApiException.notFound("NOT_FOUND", "Role not found."));
     if ("ADMIN".equals(role.code())) throw protectedRole();
+    // 权威白名单只取 sys_permission；rbac:* 属于运行时派生码，不能从请求体直接写入数据库。
     Set<String> known = new HashSet<>(catalog.permissionCodes()), codes = new HashSet<>();
     for (var g : r.grants()) {
       if (!known.contains(g.code()))
         throw ApiException.badRequest("UNKNOWN_PERMISSION", "未知权限码，管理映射码不能直接授予。");
       if (!codes.add(g.code())) throw ApiException.badRequest("VALIDATION", "grants含重复权限码。");
     }
+    // 同一功能的非 read 动作必须配套 read，但两者 scope 可不同，不能把 edit 的范围强加到 read。
     for (String code : codes) {
       String read = code.substring(0, code.lastIndexOf(':')) + ":read";
       if (!code.endsWith(":read") && !codes.contains(read))

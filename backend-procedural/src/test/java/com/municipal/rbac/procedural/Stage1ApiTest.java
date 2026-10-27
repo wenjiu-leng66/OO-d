@@ -22,6 +22,11 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.*;
 import org.springframework.transaction.annotation.*;
 
+/**
+ * 一期真实 Service/JDBC 的 MockMvc + H2 集成回归，使用合成数据和测试专用密码。
+ * 覆盖允许/拒绝、范围、版本冲突及回滚；不替代真实 Cookie 网络、MySQL 持久化或全量数据性能验收。
+ * 普通用例用外层事务回滚，跨线程/独立事务用例显式关闭外层事务并在 finally 清理。
+ */
 @SpringBootTest(
     properties = {
       "spring.profiles.active=h2",
@@ -507,6 +512,7 @@ class Stage1ApiTest {
 
   @Test
   @Transactional(propagation = Propagation.NOT_SUPPORTED)
+  // 在真实替换完成后注入异常，独立于测试外层事务验证版本与授权均被服务事务回滚。
   void failedReplacementRollsBackGrantsAndVersion() throws Exception {
     var admin = login("admin");
     String id =
@@ -540,6 +546,7 @@ class Stage1ApiTest {
 
   @Test
   @Transactional(propagation = Propagation.NOT_SUPPORTED)
+  // 两个会话同时提交同一旧版本；必须恰好一方成功、一方 409，最终集合不能拼接为两方并集。
   void simultaneousCasHasExactlyOneWinner() throws Exception {
     MockHttpSession admin1 = login("admin"), admin2 = login("admin");
     String id =
@@ -588,6 +595,7 @@ class Stage1ApiTest {
   }
 
   @Test
+  // 末尾字符差异位于 bcrypt 截断边界之外，用于证明新 PBKDF2 路径确实校验全部长密码。
   void longPasswordsDoNotAcceptDifferentSuffixBeyondBcryptLimit() throws Exception {
     String a = "A".repeat(127) + "B", b = "A".repeat(127) + "C";
     var session = login("SG000013");
@@ -633,6 +641,7 @@ class Stage1ApiTest {
 
   @Test
   @Transactional(propagation = Propagation.NOT_SUPPORTED)
+  // 用门闩固定“分配持角色锁 → 删除等待”时序，避免只靠睡眠构造不稳定竞态。
   void concurrentAssignmentMakesUnconfirmedRoleDeleteRefuse() throws Exception {
     var admin = login("admin");
     String roleId =
@@ -706,6 +715,7 @@ class Stage1ApiTest {
   }
 
   @Test
+  // SELF 可定位本部门节点，但成员仍只能有本人，且不能借同部门范围创建另一个账号。
   void selfManagementScopesNeverExposeDepartmentPeersOrCreateOtherAccounts() throws Exception {
     var admin = login("admin");
     String roleId =

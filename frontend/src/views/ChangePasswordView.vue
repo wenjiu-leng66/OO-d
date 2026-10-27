@@ -13,6 +13,8 @@ const rules = {
   newPassword: [{ required: true, message: '请输入新密码', trigger: 'blur' }, { min: 8, max: 64, message: '新密码须为 8–64 位', trigger: 'blur' }],
   confirm: [{ validator: (_rule, value, callback) => value === form.newPassword ? callback() : callback(new Error('两次输入的新密码不一致')), trigger: 'blur' }]
 }
+// 只有 API 成功并刷新 mustChangePassword 后才回门户；失败保留在当前改密流程。
+// 确认密码是前端交互校验，旧密码及新密码规则仍由接口校验。
 async function submit() {
   if (!await formRef.value.validate().catch(() => false)) return
   saving.value = true; error.value = ''

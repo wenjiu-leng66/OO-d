@@ -6,10 +6,13 @@ import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const seeds = resolve(process.argv[2] || resolve(here, '../../database/seeds'))
+// 受控种子 CSV 的字段不含逗号/引号/换行；这里不是通用 Excel/CSV 导入器。
+// 正式原表清洗及质量检查由 database/seeds/import_excel.py 处理。
 const rows = file => readFileSync(resolve(seeds, file), 'utf8').trim().split(/\r?\n/).slice(1).map(line => line.split(','))
 
 const systems = rows('system_codes.csv').map(([code, name]) => ({ code, name }))
 const codeByName = new Map(systems.map(item => [item.name, item.code]))
+// 复用种子中固定 fNNN，不能按数组行号重编号，否则已有角色授权将指向不同功能。
 const functions = rows('function_codes.csv').map(([id, system, module, name]) => {
   if (!codeByName.has(system)) throw new Error(`未知系统：${system}`)
   return [id, codeByName.get(system), module, name]

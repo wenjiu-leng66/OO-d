@@ -8,6 +8,9 @@ import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
+/**
+ * 用户管理 HTTP 适配层；基础资料、状态、重置密码和角色分配分开调用，避免一个请求跨越多种权限边界。
+ */
 @RestController
 @RequestMapping("/api/v1/users")
 public class UserController {

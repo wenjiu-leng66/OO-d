@@ -1,6 +1,7 @@
 'use strict';
 
 // 数据范围合并与检查：需求规格 GRANT-04、AUTHZ-03。
+// 特意让 read 与 edit 来自不同角色/范围，防止把“某个权限拥有 ALL”误解释为全部动作拥有 ALL。
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');

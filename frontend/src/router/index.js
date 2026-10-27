@@ -27,6 +27,8 @@ const functionReadCode = to => {
   return fn ? `${fn.systemCode}:${fn.id}:read` : null
 }
 
+// 此表是页面访问入口；sessionOnly 只表示无需业务权限，仍需通过下方登录与首次改密守卫。
+// stage 元数据用于标识后续静态页面，不会把继承/约束等能力加入一期授权计算。
 const routes = [
   { path: '/login', component: LoginView, meta: { public: true } },
   { path: '/', redirect: '/portal' },
@@ -56,12 +58,15 @@ const routes = [
 
 const router = createRouter({ history: createWebHistory(), routes })
 
+// 顺序不能互换：先恢复演示身份，再读取当前权限，最后判断目标页。
+// sessionStorage 中的账号 ID 只用于原型恢复，真实后端通过 JSESSIONID 认证。
 router.beforeEach(async (to) => {
   await restoreSession()
   await refreshSession()
   if (to.meta.public) return auth.isAuthenticated ? '/portal' : true
   // 首次登录或被重置密码后，只能进入修改密码页（LOGIN-05）。
   if (auth.isAuthenticated && auth.mustChangePassword && to.path !== '/password') return '/password'
+  // 登录重定向保留原目标，但跳回后仍执行本守卫；直接输入 URL 无法跳过权限判断。
   const access = routeAccess(auth, to)
   if (!access.allowed) return access.redirect === '/login'
     ? { path: '/login', query: { redirect: to.fullPath } }

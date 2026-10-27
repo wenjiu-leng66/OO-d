@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 // Node 使用 CommonJS 导出；浏览器由经典脚本提供相同的 Rbac0 对象。
+// 测试的是会话到路由规则的适配，不启动 Vue Router、浏览器或真实服务；页面演示另行验收。
 globalThis.Rbac0 = require('../../frontend/src/authorization/rbac0-policy.js');
 const adapter = import('../../frontend/src/policy-adapter.js');
 const auth = {

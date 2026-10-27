@@ -8,6 +8,9 @@ import java.util.Map;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
+/**
+ * 角色管理 HTTP 适配层；PUT permissions 是带 version 的全集合替换，不是增量添加权限。
+ */
 @RestController
 @RequestMapping("/api/v1/roles")
 public class RoleController {

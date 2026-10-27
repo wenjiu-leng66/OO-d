@@ -6,6 +6,10 @@ import org.springframework.jdbc.core.*;
 import org.springframework.jdbc.support.*;
 import org.springframework.stereotype.Repository;
 
+/**
+ * 用户表及用户角色关联的 JDBC 访问层。业务权限由 Service 校验，此层仅执行参数绑定和数据操作。
+ * 带 FOR UPDATE 或集合替换的方法依赖调用方事务，不能脱离 Service 事务单独实现原子性。
+ */
 @Repository
 public class UserMapper {
   private final JdbcTemplate jdbc;
@@ -34,6 +38,9 @@ public class UserMapper {
     return jdbc.query("SELECT * FROM sys_user WHERE id=?", ROW, id).stream().findFirst();
   }
 
+  /**
+   * 工号或手机号登录共用参数化查询；唯一约束及导入规则负责保证账号标识的确定性。
+   */
   public Optional<UserPO> findByAccount(String account) {
     return jdbc
         .query("SELECT * FROM sys_user WHERE username=? OR phone=?", ROW, account, account)
@@ -45,6 +52,9 @@ public class UserMapper {
     return jdbc.query("SELECT * FROM sys_user ORDER BY id", ROW);
   }
 
+  /**
+   * 鉴权传 true，仅纳入启用角色；编辑分配集合传 false，保留已分配但停用的角色。
+   */
   public List<String> roleIds(String id, boolean enabledOnly) {
     return jdbc.queryForList(
         "SELECT r.id FROM sys_user_role ur JOIN sys_role r ON r.id=ur.role_id WHERE ur.user_id=?"
@@ -54,6 +64,9 @@ public class UserMapper {
         id);
   }
 
+  /**
+   * 保护规则需要识别完整分配关系，因此这里不按角色启停过滤。
+   */
   public boolean hasRoleCode(String id, String code) {
     return jdbc.queryForObject(
             "SELECT COUNT(*) FROM sys_user_role ur JOIN sys_role r ON r.id=ur.role_id WHERE"
@@ -64,6 +77,9 @@ public class UserMapper {
         > 0;
   }
 
+  /**
+   * 新账户必须改密，初始密码已由 Service 编码；插入后读取数据库生成 ID，ID 对外统一为十进制字符串。
+   */
   public String insert(
       String username,
       String name,
@@ -95,6 +111,9 @@ public class UserMapper {
         > 0;
   }
 
+  /**
+   * null 手机号不参与重复检查；编辑本人资料时排除当前 ID，并发冲突仍由数据库唯一约束处理。
+   */
   public boolean phoneExists(String value, String except) {
     return value != null
         && jdbc.queryForObject(
@@ -147,6 +166,9 @@ public class UserMapper {
     jdbc.update("UPDATE sys_user SET last_login_at=CURRENT_TIMESTAMP WHERE id=?", id);
   }
 
+  /**
+   * 先清空以该员工为负责人的引用，再清理用户角色关联，最后删除员工；三个动作由上层事务包裹。
+   */
   public void delete(String id) {
     jdbc.update("UPDATE sys_dept SET manager_user_id=NULL WHERE manager_user_id=?", id);
     jdbc.update("DELETE FROM sys_user_role WHERE user_id=?", id);
@@ -154,8 +176,8 @@ public class UserMapper {
   }
 
   /**
-   * CAS is the first write in the transaction; a competing writer waits, then sees zero updated
-   * rows.
+   * 以“ID + 旧版本”做比较并递增（CAS），这是角色集合事务的首个写操作。
+   * 并发事务等待后使用旧版本更新将影响零行，Service 据此返回 409，避免静默覆盖。
    */
   public boolean compareAndIncrement(String id, int version) {
     return jdbc.update(
@@ -165,11 +187,17 @@ public class UserMapper {
         == 1;
   }
 
+  /**
+   * 冲突后用锁定读取得当前提交版本，避免 REPEATABLE_READ 快照返回旧值；调用方已处于事务中。
+   */
   public int currentRoleVersion(String id) {
     return jdbc.queryForObject(
         "SELECT role_version FROM sys_user WHERE id=? FOR UPDATE", Integer.class, id);
   }
 
+  /**
+   * 整组替换而非增量追加。调用方须先锁定相关角色、校验版本并持有事务，失败才能连同版本一起回滚。
+   */
   public void replaceRoles(String id, List<String> roles) {
     jdbc.update("DELETE FROM sys_user_role WHERE user_id=?", id);
     for (String role : roles)

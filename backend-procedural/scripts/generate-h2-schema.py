@@ -9,11 +9,13 @@ import re
 
 
 def generated_schema(source: str) -> str:
+    # 仅移除 MySQL 注释/存储参数/普通索引语法，唯一约束、外键和 CHECK 仍需保留。
     sql = re.sub(r"COMMENT\s+'(?:[^']|'')*'", '', source)
     sql = re.sub(r'\) ENGINE\s*=\s*InnoDB[^;]*;', ');', sql)
     sql = re.sub(r'^\s*KEY \w+ \([^\n]+\),?\n', '', sql, flags=re.M)
     sql = re.sub(r'UNIQUE KEY \w+', 'UNIQUE', sql)
     sql = sql.replace(' ON UPDATE CURRENT_TIMESTAMP', '')
+    # 两种表达式都以 ALL > DEPT > SELF 取最大范围，避免测试方言改变授权语义。
     sql = sql.replace(
         "ELT(MAX(FIELD(rp.data_scope, 'SELF', 'DEPT', 'ALL')), 'SELF', 'DEPT', 'ALL')",
         "CASE MAX(CASE rp.data_scope WHEN 'ALL' THEN 3 WHEN 'DEPT' THEN 2 ELSE 1 END) WHEN 3 THEN 'ALL' WHEN 2 THEN 'DEPT' ELSE 'SELF' END",
@@ -32,6 +34,7 @@ def main() -> None:
     source = root / 'database/migrations/V001__create_core_tables.sql'
     target = root / 'backend-procedural/src/main/resources/schema.sql'
     expected = generated_schema(source.read_text(encoding='utf-8'))
+    # --check 用于检测方言文件漂移，只比较不写入；常规模式用于迁移变更后的重新生成。
     if args.check:
         if target.read_text(encoding='utf-8') != expected:
             raise SystemExit('H2 schema drift: regenerate with backend-procedural/scripts/generate-h2-schema.py')

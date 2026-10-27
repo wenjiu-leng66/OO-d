@@ -13,7 +13,10 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Opt-in SYNTHETIC demo fixture. Never reads or embeds the private course employee workbook. */
+/**
+ * 显式开启的合成演示种子，不读取或嵌入课程员工原始表。
+ * 真实全量数据通过离线导入流程装载；演示目录规模相同不代表原始员工/授权已完成全量验收。
+ */
 @Component
 public class DataInitializer implements ApplicationRunner {
   private static final Logger log = LoggerFactory.getLogger(DataInitializer.class);
@@ -44,6 +47,10 @@ public class DataInitializer implements ApplicationRunner {
     return row.hasNonNull(key) && !row.get(key).asText().isBlank() ? row.get(key).asText() : null;
   }
 
+  /**
+   * 应用启动时按外键依赖顺序导入空库，整批种子位于同一事务。
+   * 已有任一用户或系统就跳过，防止重启覆盖现有资料；这也是保留数据库卷的持久化验收前提。
+   */
   @Override
   @Transactional
   public void run(ApplicationArguments args) throws Exception {
@@ -74,6 +81,7 @@ public class DataInitializer implements ApplicationRunner {
           "HQ".equals(type) ? 1 : List.of("HQ_DEPT", "BRANCH").contains(type) ? 2 : 3,
           number(d.get("id").asText()));
     }
+    // JSON 中的稳定功能编号保留；数据库系统/模块/权限的数字键只在本次合成装载内建立映射。
     Map<String, Integer> systems = new LinkedHashMap<>(),
         modules = new LinkedHashMap<>(),
         permissionIds = new HashMap<>();
@@ -148,6 +156,7 @@ public class DataInitializer implements ApplicationRunner {
             permissionIds.get(g.get("code").asText()),
             g.get("scope").asText());
     }
+    // 每个合成账户独立编码同一环境初始密码，不能把明文密码或共享固定哈希写入 JSON。
     for (var u : data.get("users")) {
       int uid = number(u.get("id").asText());
       jdbc.update(
@@ -168,6 +177,7 @@ public class DataInitializer implements ApplicationRunner {
         jdbc.update(
             "INSERT INTO sys_user_role(user_id,role_id) VALUES(?,?)", uid, number(r.asText()));
     }
+    // 组织与员工相互引用：先建立组织，再建员工，最后补负责人外键，避免按姓名匹配。
     for (var d : data.get("departments"))
       if (d.hasNonNull("managerId"))
         jdbc.update(
@@ -178,6 +188,7 @@ public class DataInitializer implements ApplicationRunner {
     try (var connection = jdbc.getDataSource().getConnection()) {
       product = connection.getMetaData().getDatabaseProductName();
     }
+    // H2 显式 ID 种子后调整自增起点；MySQL 的 AUTO_INCREMENT 行为不同，不运行该方言。
     if (product.equals("H2")) {
       jdbc.execute(
           "ALTER TABLE sys_user ALTER COLUMN id RESTART WITH " + (data.get("users").size() + 1));

@@ -5,6 +5,9 @@ import java.util.*;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+/**
+ * 组织数据只读访问及下级集合展开；所有范围判定都以稳定部门 ID 而不是名称为依据。
+ */
 @Repository
 public class DepartmentMapper {
   private final JdbcTemplate jdbc;
@@ -44,6 +47,10 @@ public class DepartmentMapper {
         .findFirst();
   }
 
+  /**
+   * 以给定节点为起点反复扩展子节点，结果包含自身；无效/不存在节点返回空集合。
+   * Set 使每个节点最多加入一次，避免此展开过程在坏环上无限迭代；不负责证明组织树本身无环。
+   */
   public Set<String> subtree(String id) {
     Set<String> found = new LinkedHashSet<>();
     if (id == null) return found;

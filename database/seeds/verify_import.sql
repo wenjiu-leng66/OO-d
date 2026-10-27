@@ -5,6 +5,7 @@
 -- =============================================================
 
 -- 1. 各表行数 (对应报告里的部门、系统/模块/功能点、权限、角色授权、用户数)
+-- 数量必须与当前输入对应，不能把合成小样例硬套全量 111/18/115/359/2154 等基准。
 SELECT 'sys_dept' AS tbl, COUNT(*) AS n FROM sys_dept
 UNION ALL SELECT 'sys_user', COUNT(*) FROM sys_user
 UNION ALL SELECT 'sys_role', COUNT(*) FROM sys_role
@@ -32,6 +33,7 @@ SELECT id, name FROM sys_dept WHERE manager_name IS NOT NULL AND manager_user_id
 SELECT id, username FROM sys_user WHERE dept_id IS NULL AND username <> 'admin';
 
 -- 5. 部门树: 每个部门都能从根节点走到, 且 level 与实际深度一致 (返回空 = 正常; 有环的部门走不到)
+-- 深度 10 是本次校验的防失控上限，超出会被列为异常；单根约束还需与导入报告一起核对。
 WITH RECURSIVE tree AS (
     SELECT id, 1 AS depth FROM sys_dept WHERE parent_id IS NULL
     UNION ALL
@@ -75,6 +77,7 @@ GROUP BY f.name, r.id, r.name
 ORDER BY r.id;
 
 -- 9. 重复导入核对: 业务数据指纹, 不含密码哈希 (盐每次随机)。同一份源表导入两次, 结果应完全相同
+-- CRC32/BIT_XOR 是快速回归指纹，存在碰撞，不是密码学证明；关键差异应再按主键逐字段比较。
 SELECT (SELECT BIT_XOR(CRC32(CONCAT_WS('|', id, name, short_name, IFNULL(parent_id, ''), dept_type, level,
                                        IFNULL(manager_name, ''), IFNULL(manager_user_id, ''))))
         FROM sys_dept)                                                                           AS dept_fp,

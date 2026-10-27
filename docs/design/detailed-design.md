@@ -9,8 +9,8 @@ JDK 21、Spring Boot 3.3.5、Spring JDBC。Controller接收HTTP和校验DTO，Se
 ```mermaid
 flowchart LR
   HTTP[HTTP Cookie请求] --> C[Controller与DTO校验]
-  C --> A[AuthorizationService]
-  A --> S[功能Service]
+  C --> S[功能Service]
+  S --> A[AuthorizationService]
   S --> M[Mapper / JdbcTemplate]
   A --> M
   M --> DB[(正式V001数据库)]
@@ -54,11 +54,11 @@ flowchart LR
 
 用户角色集合使用`sys_user.role_version`；角色直接授权集合使用`sys_role.permission_version`。GET读取版本，PUT提交完整目标集合和version，先做权限/范围/保护/合法性校验，再在事务中比较并递增版本、替换关联。任意一步异常全部回滚；旧版本409 VERSION_CONFLICT含currentVersion，不覆盖并发成功结果。
 
-用户角色替换和角色删除按数字ID升序锁定相关角色行，并在READ_COMMITTED事务中重新读取关系，避免删除确认与并发授角互相穿透，或用旧授权快照判断管理类角色。版本冲突的currentVersion通过锁定当前读获取，避免MySQL可重复读快照返回过期细节；删除角色逐一更新受影响用户版本。
+用户角色替换和角色删除按数字ID升序锁定相关角色行；READ_COMMITTED事务在锁后重读角色管理类分类，用户集合的版本CAS拒绝旧请求。角色删除锁后重新核对成员，避免删除确认与并发授角互相穿透。版本冲突的currentVersion通过锁定当前读获取，避免MySQL可重复读快照返回过期细节；删除角色逐一更新受影响用户版本。
 
 授权数据是`[{code,scope}]`，拒绝重复/未知码与非法范围。非read动作必须同时有本功能read，前端自动勾，后端READ_REQUIRED兜底。失败注入验证属于后端测试，生产API不暴露“模拟失败”开关。
 
-禁止停用/删除自己、改自己角色，禁止停用/删除唯一admin或改其角色。六个内置角色不可删除，ADMIN不可停用/改授权。有成员的自建角色删除需要confirm=true；删除清理关联并更新受影响用户角色版本。用户删除通过外键清理角色关联并将部门负责人置空。
+禁止停用/删除自己、改自己角色；用户名为admin或持有ADMIN角色的账号同样受到停用/删除/角色变更保护，不以剩余管理员数量为条件。六个内置角色不可删除，ADMIN不可停用/改授权。有成员的自建角色删除需要confirm=true；删除清理关联并更新受影响用户角色版本。UserMapper在事务中显式将部门负责人置空、删除用户角色关联后删除用户；数据库外键另提供关系一致性兜底。
 
 ## 数据与运行
 
@@ -72,4 +72,4 @@ flowchart LR
 
 接口字段与状态码见[OpenAPI](../../api/openapi.yaml)。后端集成测试覆盖会话、首次改密、保护、范围、原子授权与409；真实HTTP脚本验证Cookie及运行实例；MySQL迁移、全量导入、持久化和性能分别记录，不能用H2通过替代。
 
-实际命令、证据与待执行项见[验证记录](../stage1/verification-record.md)和[自测步骤](../stage1/self-test.md)。角色继承、SSD/DSD/基数、激活角色切换、审计日志、双后端等价属于后续阶段。按用户最新要求，本轮不连接或操作服务器；部署材料已准备，留待用户自行部署验证，不声称已经上线。
+实际命令、证据与待执行项见[验证记录](../stage1/verification-record.md)和[自测步骤](../stage1/self-test.md)。角色继承、SSD/DSD/基数、激活角色切换、审计日志、双后端等价属于后续阶段。结构化功能分解、数据流和模块契约见[结构化设计](structured-design.md)。当前服务器公开入口可达性与业务验收结果分别记录，不能由部署文件推断已部署版本或全部测试通过。

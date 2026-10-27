@@ -7,6 +7,9 @@ import jakarta.validation.Valid;
 import java.util.Map;
 import org.springframework.web.bind.annotation.*;
 
+/**
+ * 本人信息、有效权限和改密入口；强制改密时只允许本人信息及密码操作，不放行业务接口。
+ */
 @RestController
 @RequestMapping("/api/v1/me")
 public class MeController {

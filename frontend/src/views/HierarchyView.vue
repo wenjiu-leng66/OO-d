@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus'
 import LaterStageBanner from '../components/LaterStageBanner.vue'
 
 defineProps({ embedded: { type: Boolean, default: false } })
+// 以下继承边和有效权限均为静态示例；没有图遍历、环检测或继承授权持久化实现。
 const edges = [
   { senior: '公司领导', junior: '部门经理', note: '示例：领导拥有经理的全部权限' },
   { senior: '部门经理', junior: '基础办公', note: '自建公共能力角色' },

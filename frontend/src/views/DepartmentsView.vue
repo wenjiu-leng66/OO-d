@@ -8,6 +8,7 @@ import { scopeLabel } from '../api/fixtures/catalog'
 
 const loading = ref(true); const failed = ref(false); const data = ref([]); const selected = ref(null)
 const members = ref([]); const membersLoading = ref(false)
+// 统计基于接口已裁剪的可见树，不从完整合成组织表另算公司总数。
 function flatten(nodes, result = []) { nodes.forEach(node => { result.push(node); flatten(node.children || [], result) }); return result }
 const allNodes = computed(() => flatten(data.value))
 const typeCounts = computed(() => Object.entries(allNodes.value.reduce((acc, node) => ({ ...acc, [node.typeLabel]: (acc[node.typeLabel] || 0) + 1 }), {})))
@@ -18,6 +19,7 @@ async function load() {
   try { data.value = await api.listDepartments(); if (data.value[0]) await choose(data.value[0]) }
   catch { failed.value = true } finally { loading.value = false }
 }
+// 人员列表由所选部门接口返回（含下级）；选择树节点不是额外授权，接口仍须校验范围。
 async function choose(node) {
   selected.value = node; membersLoading.value = true
   try { members.value = await api.listDepartmentMembers(node.id) } finally { membersLoading.value = false }

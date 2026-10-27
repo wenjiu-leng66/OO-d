@@ -1,5 +1,6 @@
 'use strict';
 
+// 纯策略单元测试：精确权限码、默认拒绝和 RBAC0 角色并集；不涉及数据库或后端认证。
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -17,6 +18,7 @@ const session = {
 const roleRoute = { path: '/roles', requiredPermissions: ['rbac:role:read'] };
 
 test('browser classic script exposes the same usable API without CommonJS', () => {
+  // 用独立 VM 模拟没有 require/module 的浏览器，验证经典脚本与 Node 的共用导出协议。
   const browser = vm.createContext({});
   vm.runInContext(fs.readFileSync(policyPath, 'utf8'), browser);
   assert.deepEqual(Object.keys(browser.Rbac0).sort(), [
